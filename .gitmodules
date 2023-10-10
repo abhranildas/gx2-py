@@ -1,0 +1,6 @@
+[submodule "submodules/gx2"]
+	path = submodules/gx2
+	url = https://github.com/abhranildas/gx2
+[submodule "matlab/gx2"]
+	path = matlab/gx2
+	url = https://github.com/abhranildas/gx2
