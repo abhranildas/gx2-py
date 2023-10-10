@@ -1,0 +1,22 @@
+Running test_gx2inv.py
+Python Test 1 result: [24.3821493]
+MATLAB Test 1 result: [29.3981]
+
+Python Test 2 result: [14.04136412]
+MATLAB Test 2 result: [14.0961]
+
+Python Test 3 result: [-4.83668314 12.32261457 35.36842994]
+MATLAB Test 3 result: [-3.83849      13.3215      36.3684]
+
+--------------------------------------------------
+Running test_gx2stat.py
+Python Test 1 result: mu=3, v=546
+MATLAB Test 1 result: mu=3, v=546
+
+Python Test 2 result: mu=15, v=49
+MATLAB Test 2 result: mu=15, v=49
+
+Python Test 3 result: mu=15, v=272
+MATLAB Test 3 result: mu=15, v=272
+
+--------------------------------------------------

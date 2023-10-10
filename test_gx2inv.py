@@ -4,6 +4,11 @@ from scipy.optimize import root
 from scipy.stats import ncx2
 from functions import gx2inv
 
+import os
+
+import warnings
+warnings.filterwarnings('ignore')
+
 # Define the tests
 tests = [
     {
@@ -38,8 +43,11 @@ for i, test in enumerate(tests, start=1):
     x_python = gx2inv(test['p'], test['w'], test['k'], test['lambda_'], test['m'], test['s'])
     print(f'Python Test {i} result: {x_python}')
 
+    # Get the absolute path of the MATLAB file
+    matlab_file_path = os.path.abspath('./gx2-matlab')
+
     # Run the MATLAB version
-    matlab_command = f"addpath('/Users/salim/matlab/gx2'); disp(gx2inv({test['p']}, {test['w']}, {test['k']}, {test['lambda_']}, {test['m']}, {test['s']}))"
+    matlab_command = f"addpath('{matlab_file_path}'); x = gx2inv({test['p']}, {test['w']}, {test['k']}, {test['lambda_']}, {test['m']}, {test['s']}); disp(['[', num2str(x), ']'])"
     result = subprocess.run(['matlab', '-batch', matlab_command], capture_output=True, text=True)
     
     print(f'MATLAB Test {i} result: {result.stdout}')
