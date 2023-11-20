@@ -3,6 +3,7 @@ Python library to compute the statistics, pdf, cdf, inverse cdf and random numbe
 
 ## Authors
 Abhranil Das, Center for Perceptual Systems, The University of Texas at Austin.
+
 Translated from Matlab to Python by Salim M'jahad, Center for Perceptual Systems, The University of Texas at Austin.
 
 Bugs/comments/questions/suggestions to abhranil.das@utexas.edu.
