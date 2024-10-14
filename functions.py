@@ -1,4 +1,3 @@
-
 """
 Core Functions
 
@@ -187,7 +186,7 @@ def gx2_params_norm_quad(mu, v, quad):
     return w, k, lambda_, m, s
 
 
-def gx2inv(p: Union[float, np.ndarray], w: np.ndarray, k: np.ndarray, lambda_: np.ndarray, m: float, s: float, AbsTol: float = 1e-10, RelTol: float = 1e-6) -> np.ndarray:
+def gx2inv(p: Union[float, np.ndarray], w: np.ndarray, k: np.ndarray, lambda_: np.ndarray, m: float, s: float, AbsTol: float = 1e-10, RelTol: float = 1e-6, side="lower") -> np.ndarray:
     """
     Returns the inverse cdf of a generalized chi-squared, using Ruben's [1962] method, Davies' [1973] method, or the native ncx2inv, depending on the input.
 
@@ -203,6 +202,7 @@ def gx2inv(p: Union[float, np.ndarray], w: np.ndarray, k: np.ndarray, lambda_: n
     'AbsTol'  absolute error tolerance for the cdf function that is inverted
     'RelTol'  relative error tolerance for the cdf function that is inverted
                The absolute OR the relative tolerance is satisfied.
+    'side'    "lower" or "upper", when "upper" calculate the inverse survival function
 
     Output:
     x         computed point
@@ -214,12 +214,18 @@ def gx2inv(p: Union[float, np.ndarray], w: np.ndarray, k: np.ndarray, lambda_: n
     if s == 0 and len(set(w)) == 1:
         # native ncx2 fallback
         if np.sign(np.unique(w)[0]) == 1:
-            x = ncx2.ppf(p, sum(k), sum(lambda_)) * np.unique(w) + m
+            if side.lower == "lower":
+                x = ncx2.ppf(p, sum(k), sum(lambda_)) * np.unique(w) + m
+            else:
+                x = ncx2.isf(p, sum(k), sum(lambda_)) * np.unique(w) + m
         elif np.sign(np.unique(w)[0]) == -1:
-            x = ncx2.ppf(1 - p, sum(k), sum(lambda_)) * np.unique(w) + m
+            if side.lower == "lower":
+                x = ncx2.ppf(1 - p, sum(k), sum(lambda_)) * np.unique(w) + m
+            else:
+                x = ncx2.isf(1 - p, sum(k), sum(lambda_)) * np.unique(w) + m
     else:
         mu = gx2stat(w, k, lambda_, s, m)
-        x = np.array([root(lambda x: gx2cdf(x, w, k, lambda_, m, s, AbsTol=AbsTol, RelTol=RelTol) - p_val, mu).x[0] for p_val in np.atleast_1d(p)])
+        x = np.array([root(lambda x: gx2cdf(x, w, k, lambda_, m, s, AbsTol=AbsTol, RelTol=RelTol, side=side) - p_val, mu).x[0] for p_val in np.atleast_1d(p)])
 
     return x
 
@@ -440,7 +446,7 @@ def gx2cdf_ruben(x: Union[float, np.ndarray], w: np.ndarray, k: np.ndarray, lamb
     p         computed cdf
     errbnd    upper error bound of the computed cdf
     """
-    w = np.atleast_1d(w)  # Ensure w is an array, even if it's a single value
+    w = np.atleast_1d(np.asarray(w, dtype=float))  # Ensure w is an array, even if it's a single value
     k = np.atleast_1d(k)  # Ensure k is an array, even if it's a single value
     lambda_ = np.atleast_1d(lambda_)  # Ensure lambda_ is an array, even if it's a single value
 
@@ -523,7 +529,3 @@ def gx2cdf(x: Union[float, np.ndarray], w: np.ndarray, k: np.ndarray, lambda_: n
         p, _ = gx2cdf_davies(x, w, k, lambda_, m, s, side=side, AbsTol=AbsTol, RelTol=RelTol)
 
     return p
-
-
-
-
