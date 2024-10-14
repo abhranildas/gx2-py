@@ -224,7 +224,7 @@ def gx2inv(p: Union[float, np.ndarray], w: np.ndarray, k: np.ndarray, lambda_: n
             else:
                 x = ncx2.isf(1 - p, sum(k), sum(lambda_)) * np.unique(w) + m
     else:
-        mu = gx2stat(w, k, lambda_, s, m)
+        mu = gx2stat(w, k, lambda_, s, m)[0]
         x = np.array([root(lambda x: gx2cdf(x, w, k, lambda_, m, s, AbsTol=AbsTol, RelTol=RelTol, side=side) - p_val, mu).x[0] for p_val in np.atleast_1d(p)])
 
     return x
