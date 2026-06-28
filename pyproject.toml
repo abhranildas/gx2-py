@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gx2"
-version = "1.0.0"
+version = "1.0.1"
 description = "Statistics, pdf, cdf, inverse cdf and random numbers of the generalized chi-square distribution"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -44,6 +44,7 @@ test = ["pytest>=7.0"]
 docs = ["jupyter", "matplotlib>=3.4"]
 
 [project.urls]
+"GitHub source" = "https://github.com/abhranildas/gx2-py"
 "Reference paper 1" = "https://arxiv.org/abs/2012.14331"
 "Reference paper 2" = "https://arxiv.org/abs/2404.05062"
 
