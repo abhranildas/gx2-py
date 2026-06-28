@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gx2"
+version = "1.0.0"
+description = "Statistics, pdf, cdf, inverse cdf and random numbers of the generalized chi-square distribution"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Abhranil Das", email = "abhranil.das@utexas.edu"},
+]
+keywords = [
+    "generalized chi-square",
+    "chi-square",
+    "quadratic form",
+    "normal distribution",
+    "statistics",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "mpmath>=1.2",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.4"]
+test = ["pytest>=7.0"]
+docs = ["jupyter", "matplotlib>=3.4"]
+
+[project.urls]
+"Reference paper 1" = "https://arxiv.org/abs/2012.14331"
+"Reference paper 2" = "https://arxiv.org/abs/2404.05062"
+
+[tool.setuptools]
+packages = ["gx2"]
