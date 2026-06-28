@@ -4,8 +4,10 @@
 
 # gx2 — Generalized chi-square distribution
 
-`gx2` computes the statistics, characteristic function, pdf, cdf, inverse cdf
+`gx2` is a python package that computes the statistics, characteristic function, pdf, cdf, inverse cdf
 and random numbers of the **generalized chi-square distribution**.
+This is the python port of the
+[MATLAB toolbox](https://www.mathworks.com/matlabcentral/fileexchange/85028-generalized-chi-square-distribution).
 
 A generalized chi-square variable is a weighted sum of independent non-central
 chi-square variables plus a normal variable — equivalently, the quadratic form
@@ -105,8 +107,6 @@ also force one:
 Abhranil Das, Center for Perceptual Systems, The University of Texas at Austin.
 Bugs / comments / questions / suggestions to abhranil.das@utexas.edu.
 
-This is the Python port of the
-[MATLAB toolbox](https://www.mathworks.com/matlabcentral/fileexchange/85028-generalized-chi-square-distribution).
 If you use this code, please cite:
  - [Methods to integrate multinormals and compute classification measures](https://arxiv.org/abs/2012.14331)
  - New methods to compute the generalized chi-square distribution: [journal](https://www.tandfonline.com/doi/abs/10.1080/00949655.2025.2501401) / [arxiv](https://arxiv.org/abs/2404.05062)
