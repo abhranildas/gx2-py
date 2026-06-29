@@ -38,22 +38,22 @@ def _ncx2pdf(x, df, nc):
 # Imhof-Davies method
 # ===========================================================================
 
-def imhof_integrand(u, x, w, k, lambda_, s, m, output):
-    """Imhof integrand; ``w,k,lambda_`` are 1-D."""
+def imhof_integrand(u, x, w, k, l, s, m, output):
+    """Imhof integrand; ``w,k,l`` are 1-D."""
     w2u2 = w ** 2 * u ** 2
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        theta = np.sum(k * np.arctan(w * u) + (lambda_ * (w * u)) / (1 + w2u2)) / 2 + u * (m - x) / 2
-        rho = np.prod(((1 + w2u2) ** (k / 4)) * np.exp((w2u2 * lambda_) / (2 * (1 + w2u2)))) * np.exp(u ** 2 * s ** 2 / 8)
+        theta = np.sum(k * np.arctan(w * u) + (l * (w * u)) / (1 + w2u2)) / 2 + u * (m - x) / 2
+        rho = np.prod(((1 + w2u2) ** (k / 4)) * np.exp((w2u2 * l) / (2 * (1 + w2u2)))) * np.exp(u ** 2 * s ** 2 / 8)
         if output == "cdf":
             return np.sin(theta) / (u * rho)
         return np.cos(theta) / rho
 
 
-def _imhof_integrand_mp(u, x, w, k, lambda_, s, m, output):
+def _imhof_integrand_mp(u, x, w, k, l, s, m, output):
     u = mp.mpf(u)
     theta = mp.mpf(0)
     rho = mp.mpf(1)
-    for wi, ki, li in zip(w, k, lambda_):
+    for wi, ki, li in zip(w, k, l):
         wi, ki, li = mp.mpf(wi), mp.mpf(ki), mp.mpf(li)
         w2u2 = wi ** 2 * u ** 2
         theta += ki * mp.atan(wi * u) + (li * (wi * u)) / (1 + w2u2)
@@ -65,10 +65,10 @@ def _imhof_integrand_mp(u, x, w, k, lambda_, s, m, output):
     return mp.cos(theta) / rho
 
 
-def imhof(x, w, k, lambda_, s, m, side="lower", output="cdf",
+def imhof(x, w, k, l, s, m, side="lower", output="cdf",
           precision="basic", AbsTol=1e-10, RelTol=1e-2):
     """Imhof-Davies method for the cdf (or pdf) of a generalized chi-square."""
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
     xf = x.ravel()
 
@@ -76,11 +76,11 @@ def imhof(x, w, k, lambda_, s, m, side="lower", output="cdf",
     if precision == "basic":
         for i, xi in enumerate(xf):
             integral[i] = quad(imhof_integrand, 0, np.inf,
-                               args=(xi, w, k, lambda_, s, m, output),
+                               args=(xi, w, k, l, s, m, output),
                                epsabs=AbsTol, epsrel=RelTol, limit=200)[0]
     elif precision == "vpa":
         for i, xi in enumerate(xf):
-            val = mp.quad(lambda u: _imhof_integrand_mp(u, xi, w, k, lambda_, s, m, output),
+            val = mp.quad(lambda u: _imhof_integrand_mp(u, xi, w, k, l, s, m, output),
                           [0, mp.inf])
             integral[i] = float(val)
     else:
@@ -111,9 +111,9 @@ def imhof(x, w, k, lambda_, s, m, side="lower", output="cdf",
 # Ruben's series method
 # ===========================================================================
 
-def ruben(x, w, k, lambda_, m, side="lower", output="cdf", n_ruben=1000):
+def ruben(x, w, k, l, m, side="lower", output="cdf", n_ruben=1000):
     """Ruben's series. Requires all ``w`` the same sign and ``s == 0``."""
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
     xf = x.ravel().astype(float).copy()
 
@@ -129,10 +129,10 @@ def ruben(x, w, k, lambda_, m, side="lower", output="cdf", n_ruben=1000):
     n = np.arange(1, n_ruben).reshape(-1, 1)  # (n_ruben-1, 1)
 
     g = (np.sum(k * (1 - beta / w) ** n, axis=1)
-         + (beta * n.ravel() * ((1 - beta / w) ** (n - 1) @ (lambda_ / w))))
+         + (beta * n.ravel() * ((1 - beta / w) ** (n - 1) @ (l / w))))
 
     a = np.full(n_ruben, np.nan)
-    a[0] = np.sqrt(np.exp(-np.sum(lambda_)) * beta ** M * np.prod(w ** (-k)))
+    a[0] = np.sqrt(np.exp(-np.sum(l)) * beta ** M * np.prod(w ** (-k)))
     if a[0] < REALMIN:
         raise FloatingPointError("Underflow: some series coefficients are "
                                  "smaller than machine precision.")
@@ -164,17 +164,17 @@ def ruben(x, w, k, lambda_, m, side="lower", output="cdf", n_ruben=1000):
 # IFFT method
 # ===========================================================================
 
-def ifft(x, w, k, lambda_, s, m, side="lower", output="cdf",
+def ifft(x, w, k, l, s, m, side="lower", output="cdf",
          span=None, n_grid=int(1e6) + 1, ft_type="cft"):
     """IFFT method. ``x='full'`` returns the cdf/pdf over a spanning grid."""
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     full = isinstance(x, str) and x.lower() == "full"
     if not full:
         x = np.asarray(x, dtype=float)
 
     if span is None:
         if full:
-            mu, v = stat(w, k, lambda_, s, m)
+            mu, v = stat(w, k, l, s, m)
             span = np.max(np.abs(mu + np.array([-1, 1]) * 100 * np.sqrt(v)))
         else:
             span = 1e5
@@ -198,7 +198,7 @@ def ifft(x, w, k, lambda_, s, m, side="lower", output="cdf",
         ncpdfs = np.empty((w_idx.size, xgrid.size))
         for i, wi in enumerate(w_idx):
             off = m if i == 0 else 0.0
-            pdfv = _pdf(xgrid, w[wi], k[wi], lambda_[wi], 0, off)
+            pdfv = _pdf(xgrid, w[wi], k[wi], l[wi], 0, off)
             pdfv = np.asarray(pdfv, dtype=float)
             finite = pdfv[~np.isinf(pdfv)]
             pdfv[np.isinf(pdfv)] = finite.max() if finite.size else 0.0
@@ -213,7 +213,7 @@ def ifft(x, w, k, lambda_, s, m, side="lower", output="cdf",
     else:  # cft
         dt = 2 * np.pi / (n_grid * dx)
         t = idx * dt
-        phi = char(-t, w, k, lambda_, s, m)
+        phi = char(-t, w, k, l, s, m)
         if output == "pdf":
             phi = phi * np.exp(1j * x_mid * dt * idx)
             p = np.real(np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(phi))) / dx)
@@ -238,14 +238,14 @@ def ifft(x, w, k, lambda_, s, m, side="lower", output="cdf",
 # Pearson's 3-moment approximation (Imhof's extension, including s and m)
 # ===========================================================================
 
-def pearson(x, w, k, lambda_, s, m, side="lower", output="cdf"):
+def pearson(x, w, k, l, s, m, side="lower", output="cdf"):
     """Pearson's 3-moment approximation."""
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
 
-    mu1 = np.sum(w * (k + lambda_)) + m
-    mu2 = 2 * np.sum(w ** 2 * (k + 2 * lambda_)) + s ** 2
-    mu3 = 8 * np.sum(w ** 3 * (k + 3 * lambda_))
+    mu1 = np.sum(w * (k + l)) + m
+    mu2 = 2 * np.sum(w ** 2 * (k + 2 * l)) + s ** 2
+    mu3 = 8 * np.sum(w ** 3 * (k + 3 * l))
     h = 8 * mu2 ** 3 / mu3 ** 2
 
     if mu3 > 0:
@@ -265,12 +265,12 @@ def pearson(x, w, k, lambda_, s, m, side="lower", output="cdf"):
     return p
 
 
-def cdf_pearson(x, w, k, lambda_, m, side="lower", output="cdf"):
+def cdf_pearson(x, w, k, l, m, side="lower", output="cdf"):
     """Pearson's 3-moment approximation without a normal term."""
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
     j = np.arange(1, 4).reshape(-1, 1)
-    c = np.sum((w ** j) * (j * lambda_ + k), axis=1)
+    c = np.sum((w ** j) * (j * l + k), axis=1)
     h = c[1] ** 3 / c[2] ** 2
     if c[2] > 0:
         y = (x - m - c[0]) * np.sqrt(h / c[1]) + h
@@ -279,7 +279,7 @@ def cdf_pearson(x, w, k, lambda_, m, side="lower", output="cdf"):
         else:
             p = np.sqrt(h / c[1]) * chi2.pdf(y, h)
     else:
-        c = np.sum(((-w) ** j) * (j * lambda_ + k), axis=1)
+        c = np.sum(((-w) ** j) * (j * l + k), axis=1)
         y = (-(x - m) - c[0]) * np.sqrt(h / c[1]) + h
         if output == "cdf":
             p = chi2.cdf(y, h) if side == "upper" else chi2.sf(y, h)
@@ -294,17 +294,17 @@ def cdf_pearson(x, w, k, lambda_, m, side="lower", output="cdf"):
 # Das's infinite-tail approximation
 # ===========================================================================
 
-def tail(x, w, k, lambda_, s, m, side="lower", output="cdf"):
+def tail(x, w, k, l, s, m, side="lower", output="cdf"):
     """Infinite-tail approximation. Returns log10 values where the result
     underflows double precision (those entries are negative)."""
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
 
     # merge into unique w's
     w, ic = uniquetol(w)
     k = np.array([np.sum(asrow(k)[ic == i]) for i in range(w.size)])
-    lambda_full = asrow(lambda_)
-    lambda_ = np.array([np.sum(lambda_full[ic == i]) for i in range(w.size)])
+    l_full = asrow(l)
+    l = np.array([np.sum(l_full[ic == i]) for i in range(w.size)])
 
     if side == "upper":
         masked = w * (w > 0)
@@ -316,39 +316,39 @@ def tail(x, w, k, lambda_, s, m, side="lower", output="cdf"):
         w_max = masked[max_idx]
 
     k_max = k[max_idx]
-    lambda_max = lambda_[max_idx]
+    l_max = l[max_idx]
 
     keep = np.ones(w.size, dtype=bool)
     keep[max_idx] = False
     w_rest = w[keep]
     k_rest = k[keep]
-    lambda_rest = lambda_[keep]
+    l_rest = l[keep]
 
     a = (np.exp(m / (2 * w_max) + s ** 2 / (8 * w_max ** 2))
-         * np.prod(np.exp((lambda_rest * w_rest) / (2 * (w_max - w_rest)))
+         * np.prod(np.exp((l_rest * w_rest) / (2 * (w_max - w_rest)))
                    / (1 - w_rest / w_max) ** (k_rest / 2)))
 
     xf = x.ravel().astype(float)
     if output == "pdf":
         with np.errstate(divide="ignore", invalid="ignore"):
-            p = a / abs(w_max) * _ncx2pdf(xf / w_max, k_max, lambda_max)
+            p = a / abs(w_max) * _ncx2pdf(xf / w_max, k_max, l_max)
         x_tiny = xf[p == 0]
-        if lambda_max:
+        if l_max:
             p_tiny = (np.log10(a) - np.log10(abs(w_max)) - np.log10(2 * np.sqrt(2 * np.pi))
                       + (k_max - 3) / 4 * np.log10(x_tiny / w_max)
-                      - (k_max - 1) / 4 * np.log10(lambda_max)
-                      + (np.sqrt(lambda_max * x_tiny / w_max) - (lambda_max + x_tiny / w_max) / 2) / np.log(10))
+                      - (k_max - 1) / 4 * np.log10(l_max)
+                      + (np.sqrt(l_max * x_tiny / w_max) - (l_max + x_tiny / w_max) / 2) / np.log(10))
         else:
             p_tiny = (np.log10(a) - np.log10(abs(w_max)) - k_max / 2 * np.log10(2)
                       - np.log10(_gamma(k_max / 2)) + (k_max / 2 - 1) * np.log10(x_tiny / w_max)
                       - x_tiny / (2 * w_max * np.log(10)))
     else:  # cdf
         with np.errstate(divide="ignore", invalid="ignore"):
-            p = a * _ncx2cdf(xf / w_max, k_max, lambda_max, upper=True)
+            p = a * _ncx2cdf(xf / w_max, k_max, l_max, upper=True)
         x_tiny = xf[p == 0]
-        if lambda_max:
-            p_tiny = (np.log10(a) - np.log10(lambda_max ** ((k_max - 1) / 4) * np.sqrt(2 * np.pi))
-                      - (np.sqrt(x_tiny / w_max) - np.sqrt(lambda_max)) ** 2 / (2 * np.log(10))
+        if l_max:
+            p_tiny = (np.log10(a) - np.log10(l_max ** ((k_max - 1) / 4) * np.sqrt(2 * np.pi))
+                      - (np.sqrt(x_tiny / w_max) - np.sqrt(l_max)) ** 2 / (2 * np.log(10))
                       + (k_max - 3) / 4 * np.log10(x_tiny / w_max))
         else:
             p_tiny = (np.log10(a) + ((k_max - 2) / 2) * np.log10(x_tiny / (2 * w_max))
@@ -368,11 +368,11 @@ def tail(x, w, k, lambda_, s, m, side="lower", output="cdf"):
 # Ellipse approximation
 # ===========================================================================
 
-def ellipse(x, w, r, lambda_, m, side="lower", output="cdf", x_scale="linear"):
+def ellipse(x, w, r, l, m, side="lower", output="cdf", x_scale="linear"):
     """Ellipse approximation near the finite tail. Requires all ``w`` the same
     sign and ``s == 0``. With ``x_scale='log'`` the inputs and outputs are
     log10 values."""
-    w = asrow(w); r = asrow(r); lambda_ = asrow(lambda_)
+    w = asrow(w); r = asrow(r); l = asrow(l)
     x = np.asarray(x, dtype=float)
     xf = x.ravel().astype(float).copy()
 
@@ -387,7 +387,7 @@ def ellipse(x, w, r, lambda_, m, side="lower", output="cdf", x_scale="linear"):
 
     ellipse_center = np.concatenate(
         [np.concatenate(([np.sqrt(li)], np.zeros(int(round(ki)) - 1)))
-         for li, ki in zip(lambda_, r)])
+         for li, ki in zip(l, r)])
     ellipse_weights = np.concatenate(
         [np.full(int(round(ki)), wi) for wi, ki in zip(w, r)])
 

@@ -27,7 +27,7 @@ def _is_full(x):
 # cdf
 # ===========================================================================
 
-def cdf(x, w, k, lambda_, s, m, side="lower", method="auto",
+def cdf(x, w, k, l, s, m, side="lower", method="auto",
         full_output=False, **kwargs):
     """Cdf of a generalized chi-square distribution.
 
@@ -43,7 +43,7 @@ def cdf(x, w, k, lambda_, s, m, side="lower", method="auto",
         Weights of the non-central chi-square terms.
     k : array_like
         Degrees of freedom of the non-central chi-square terms.
-    lambda_ : array_like
+    l : array_like
         Non-centrality parameters of the non-central chi-square terms (one per
         term, same length as ``w`` and ``k``).
     s : float
@@ -90,7 +90,7 @@ def cdf(x, w, k, lambda_, s, m, side="lower", method="auto",
     >>> p, p_err, x_grid = gx2.cdf('full', [1, -5, 2], [1, 2, 3], [2, 3, 7], 0, 5,
     ...                            full_output=True)
     """
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     full = _is_full(x)
     if not full:
         x = np.asarray(x, dtype=float)
@@ -106,47 +106,47 @@ def cdf(x, w, k, lambda_, s, m, side="lower", method="auto",
             uw0 = uw[0]
             lower = ((np.sign(uw0) == 1 and side == "lower")
                      or (np.sign(uw0) == -1 and side == "upper"))
-            p = _ncx2cdf((x - m) / uw0, np.sum(k), np.sum(lambda_), upper=not lower)
+            p = _ncx2cdf((x - m) / uw0, np.sum(k), np.sum(l), upper=not lower)
         elif np.sum(np.abs(w)) == 0 and s:
             p = norm.sf(x, m, s) if side == "upper" else norm.cdf(x, m, s)
         elif not s:
             if (np.all(w > 0) and side == "lower") or (np.all(w < 0) and side == "upper"):
                 try:
-                    p, p_err = ruben(x, w, k, lambda_, m, side=side,
+                    p, p_err = ruben(x, w, k, l, m, side=side,
                                      **_filter(ruben, kwargs))
                 except Exception:
-                    p, p_err = imhof(x, w, k, lambda_, 0, m, side=side,
+                    p, p_err = imhof(x, w, k, l, 0, m, side=side,
                                      **_filter(imhof, kwargs))
             else:
-                p, p_err = imhof(x, w, k, lambda_, s, m, side=side,
+                p, p_err = imhof(x, w, k, l, s, m, side=side,
                                  **_filter(imhof, kwargs))
         else:
-            p, p_err = imhof(x, w, k, lambda_, s, m, side=side,
+            p, p_err = imhof(x, w, k, l, s, m, side=side,
                              **_filter(imhof, kwargs))
     elif method == "ifft":
-        p, x_grid = ifft(x, w, k, lambda_, s, m, side=side, output="cdf",
+        p, x_grid = ifft(x, w, k, l, s, m, side=side, output="cdf",
                          **_filter(ifft, kwargs))
     elif method == "ray":
-        p, p_err = cdf_ray(x, w, k, lambda_, s, m, side=side,
+        p, p_err = cdf_ray(x, w, k, l, s, m, side=side,
                            **_filter(int_norm_ray, kwargs))
     elif method == "imhof":
-        p, p_err = imhof(x, w, k, lambda_, s, m, side=side,
+        p, p_err = imhof(x, w, k, l, s, m, side=side,
                          **_filter(imhof, kwargs))
     elif method == "ruben":
         if s or not (np.all(w > 0) or np.all(w < 0)):
             raise ValueError("Ruben's method can only be used when all w are "
                              "the same sign and s=0.")
-        p, p_err = ruben(x, w, k, lambda_, m, side=side,
+        p, p_err = ruben(x, w, k, l, m, side=side,
                          **_filter(ruben, kwargs))
     elif method == "tail":
-        p = tail(x, w, k, lambda_, s, m, side=side, **_filter(tail, kwargs))
+        p = tail(x, w, k, l, s, m, side=side, **_filter(tail, kwargs))
     elif method == "pearson":
-        p = pearson(x, w, k, lambda_, s, m, side=side, **_filter(pearson, kwargs))
+        p = pearson(x, w, k, l, s, m, side=side, **_filter(pearson, kwargs))
     elif method == "ellipse":
         if s or not (np.all(w > 0) or np.all(w < 0)):
             raise ValueError("The ellipse approximation can only be used when "
                              "all w are the same sign and s=0.")
-        p, p_err = ellipse(x, w, k, lambda_, m, side=side,
+        p, p_err = ellipse(x, w, k, l, m, side=side,
                            **_filter(ellipse, kwargs))
     else:
         raise ValueError("unknown method %r" % method)
@@ -160,7 +160,7 @@ def cdf(x, w, k, lambda_, s, m, side="lower", method="auto",
 # pdf
 # ===========================================================================
 
-def pdf(x, w, k, lambda_, s, m, side="lower", method="auto", diff=False,
+def pdf(x, w, k, l, s, m, side="lower", method="auto", diff=False,
         dx=None, full_output=False, **kwargs):
     """Pdf of a generalized chi-square distribution.
 
@@ -174,7 +174,7 @@ def pdf(x, w, k, lambda_, s, m, side="lower", method="auto", diff=False,
         Weights of the non-central chi-square terms.
     k : array_like
         Degrees of freedom of the non-central chi-square terms.
-    lambda_ : array_like
+    l : array_like
         Non-centrality parameters of the non-central chi-square terms.
     s : float
         Scale (standard deviation) of the added normal term.
@@ -209,7 +209,7 @@ def pdf(x, w, k, lambda_, s, m, side="lower", method="auto", diff=False,
         Returned only when ``full_output=True``. The grid of points used when
         ``x='full'``; otherwise ``None``.
     """
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     full = _is_full(x)
     if not full:
         x = np.asarray(x, dtype=float)
@@ -224,47 +224,47 @@ def pdf(x, w, k, lambda_, s, m, side="lower", method="auto", diff=False,
             uw = np.unique(w)
             if (not s) and uw.size == 1 and not full:
                 from ._methods import _ncx2pdf
-                f = _ncx2pdf((x - m) / uw[0], np.sum(k), np.sum(lambda_)) / abs(uw[0])
+                f = _ncx2pdf((x - m) / uw[0], np.sum(k), np.sum(l)) / abs(uw[0])
             elif np.sum(np.abs(w)) == 0 and s:
                 f = norm.pdf(x, m, s)
             else:
-                f, _ = imhof(x, w, k, lambda_, s, m, output="pdf",
+                f, _ = imhof(x, w, k, l, s, m, output="pdf",
                              **_filter(imhof, kwargs))
         elif method == "imhof":
-            f, _ = imhof(x, w, k, lambda_, s, m, output="pdf",
+            f, _ = imhof(x, w, k, l, s, m, output="pdf",
                          **_filter(imhof, kwargs))
         elif method == "ruben":
             if s or not (np.all(w > 0) or np.all(w < 0)):
                 raise ValueError("Ruben's method can only be used when all w are "
                                  "the same sign and s=0.")
-            f, _ = ruben(x, w, k, lambda_, m, output="pdf",
+            f, _ = ruben(x, w, k, l, m, output="pdf",
                          **_filter(ruben, kwargs))
         elif method == "tail":
-            f = tail(x, w, k, lambda_, s, m, side=side, output="pdf",
+            f = tail(x, w, k, l, s, m, side=side, output="pdf",
                      **_filter(tail, kwargs))
         elif method == "pearson":
-            f = pearson(x, w, k, lambda_, s, m, side=side, output="pdf",
+            f = pearson(x, w, k, l, s, m, side=side, output="pdf",
                         **_filter(pearson, kwargs))
         elif method == "ellipse":
             if s or not (np.all(w > 0) or np.all(w < 0)):
                 raise ValueError("The ellipse approximation can only be used when "
                                  "all w are the same sign and s=0.")
-            f, f_err = ellipse(x, w, k, lambda_, m, side=side, output="pdf",
+            f, f_err = ellipse(x, w, k, l, m, side=side, output="pdf",
                                **_filter(ellipse, kwargs))
         elif method == "ray":
-            f, f_err = pdf_ray(x, w, k, lambda_, s, m,
+            f, f_err = pdf_ray(x, w, k, l, s, m,
                                **_filter(pdf_ray, kwargs))
         elif method == "ifft":
-            f, x_grid = ifft(x, w, k, lambda_, s, m, side=side, output="pdf",
+            f, x_grid = ifft(x, w, k, l, s, m, side=side, output="pdf",
                              **_filter(ifft, kwargs))
         else:
             raise ValueError("unknown method %r" % method)
     else:
         if dx is None:
-            _, v = stat(w, k, lambda_, s, m)
+            _, v = stat(w, k, l, s, m)
             dx = np.sqrt(v) / 1e4
-        p_left = cdf(x - dx, w, k, lambda_, s, m, side=side, method=method, **kwargs)
-        p_right = cdf(x + dx, w, k, lambda_, s, m, side=side, method=method, **kwargs)
+        p_left = cdf(x - dx, w, k, l, s, m, side=side, method=method, **kwargs)
+        p_right = cdf(x + dx, w, k, l, s, m, side=side, method=method, **kwargs)
         f = (p_right - p_left) / (2 * dx)
         f = np.maximum(f, 0)
 
@@ -277,7 +277,7 @@ def pdf(x, w, k, lambda_, s, m, side="lower", method="auto", diff=False,
 # inverse cdf
 # ===========================================================================
 
-def inv(p, w, k, lambda_, s, m, side="lower", method="auto", **kwargs):
+def inv(p, w, k, l, s, m, side="lower", method="auto", **kwargs):
     """Inverse cdf (quantile function) of a generalized chi-square distribution.
 
     Parameters
@@ -293,7 +293,7 @@ def inv(p, w, k, lambda_, s, m, side="lower", method="auto", **kwargs):
         Weights of the non-central chi-square terms.
     k : array_like
         Degrees of freedom of the non-central chi-square terms.
-    lambda_ : array_like
+    l : array_like
         Non-centrality parameters of the non-central chi-square terms.
     s : float
         Scale (standard deviation) of the added normal term.
@@ -311,7 +311,7 @@ def inv(p, w, k, lambda_, s, m, side="lower", method="auto", **kwargs):
         The quantile(s): the value(s) of x at which the cdf equals ``p``.
         Returns a scalar for scalar ``p``, otherwise an array shaped like ``p``.
     """
-    w = asrow(w); k = asrow(k); lambda_ = asrow(lambda_)
+    w = asrow(w); k = asrow(k); l = asrow(l)
     p = np.atleast_1d(np.asarray(p, dtype=float))
 
     uw = np.unique(w)
@@ -319,7 +319,7 @@ def inv(p, w, k, lambda_, s, m, side="lower", method="auto", **kwargs):
         uw0 = uw[0]
         pp = 1 - p if side == "upper" else p
         from scipy.stats import ncx2, chi2
-        df = np.sum(k); nc = np.sum(lambda_)
+        df = np.sum(k); nc = np.sum(l)
 
         def _ncx2inv(pr):
             if nc == 0:
@@ -333,14 +333,14 @@ def inv(p, w, k, lambda_, s, m, side="lower", method="auto", **kwargs):
         else:
             x = np.zeros_like(pp)
     else:
-        mu, _ = stat(w, k, lambda_, s, m)
+        mu, _ = stat(w, k, l, s, m)
 
         def solve_one(pi):
             if pi > 0:
-                f = lambda xx: cdf(xx, w, k, lambda_, s, m, side=side,
+                f = lambda xx: cdf(xx, w, k, l, s, m, side=side,
                                    method=method, **kwargs) - pi
             else:
-                f = lambda xx: log_cdf(xx, w, k, lambda_, s, m, side=side,
+                f = lambda xx: log_cdf(xx, w, k, l, s, m, side=side,
                                        method=method, **kwargs) - pi
             return fzero(f, mu)
 
@@ -352,10 +352,10 @@ def inv(p, w, k, lambda_, s, m, side="lower", method="auto", **kwargs):
     return x
 
 
-def log_cdf(x, w, k, lambda_, s, m, **kwargs):
+def log_cdf(x, w, k, l, s, m, **kwargs):
     """log10 of the cdf, returning the (negative) value itself when the cdf
     has already underflowed to a log10 value."""
-    p = cdf(x, w, k, lambda_, s, m, **kwargs)
+    p = cdf(x, w, k, l, s, m, **kwargs)
     p = float(np.asarray(p).ravel()[0]) if np.size(p) == 1 else p
     if np.isscalar(p) or np.ndim(p) == 0:
         return p if p <= 0 else np.log10(p)

@@ -370,10 +370,10 @@ def int_norm_ray(mu, v, dom, side="upper", output="prob", force_mc=False,
 # public ray wrappers (gx2cdf_ray.m / gx2pdf_ray.m)
 # ===========================================================================
 
-def cdf_ray(x, w, k, lambda_, s, m, side="lower", **kwargs):
+def cdf_ray(x, w, k, l, s, m, side="lower", **kwargs):
     x = np.asarray(x, dtype=float)
     y = x.ravel()
-    quad = gx2_to_norm_quad_params(w, k, lambda_, s, m)
+    quad = gx2_to_norm_quad_params(w, k, l, s, m)
     dim = quad["q1"].size
     mu = np.zeros(dim)
     v = np.eye(dim)
@@ -384,10 +384,10 @@ def cdf_ray(x, w, k, lambda_, s, m, side="lower", **kwargs):
     return p, p_err
 
 
-def pdf_ray(x, w, k, lambda_, s, m, n_rays=1000, **kwargs):
+def pdf_ray(x, w, k, l, s, m, n_rays=1000, **kwargs):
     x = np.asarray(x, dtype=float)
     y = x.ravel()
-    quad = gx2_to_norm_quad_params(w, k, lambda_, s, m)
+    quad = gx2_to_norm_quad_params(w, k, l, s, m)
     dim = quad["q1"].size
     mu = np.zeros(dim)
     v = np.eye(dim)

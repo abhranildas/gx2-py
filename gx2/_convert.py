@@ -7,13 +7,13 @@ import numpy as np
 from ._helpers import asrow, uniquetol
 
 
-def gx2_to_norm_quad_params(w, k, lambda_, s, m):
+def gx2_to_norm_quad_params(w, k, l, s, m):
     """Quadratic-form coefficients of the standard normal whose quadratic form
     is the given generalized chi-square.
 
     Parameters
     ----------
-    w, k, lambda_ : array_like
+    w, k, l : array_like
         Weights, degrees of freedom and non-centralities of the non-central
         chi-square terms.
     s : float
@@ -29,11 +29,11 @@ def gx2_to_norm_quad_params(w, k, lambda_, s, m):
     """
     w = asrow(w)
     k = asrow(k)
-    lambda_ = asrow(lambda_)
+    l = asrow(l)
 
     q2_parts = []
     q1_parts = []
-    for wi, ki, li in zip(w, k, lambda_):
+    for wi, ki, li in zip(w, k, l):
         ki = int(round(ki))
         q2_parts.append(np.full(ki, wi))
         q1_parts.append(np.concatenate(([wi * np.sqrt(li)], np.zeros(ki - 1))))
@@ -44,7 +44,7 @@ def gx2_to_norm_quad_params(w, k, lambda_, s, m):
         q2 = np.append(q2, 0.0)
         q1 = np.append(q1, s)
 
-    return {"q2": np.diag(q2), "q1": q1.astype(float), "q0": float(np.dot(w, lambda_) + m)}
+    return {"q2": np.diag(q2), "q1": q1.astype(float), "q0": float(np.dot(w, l) + m)}
 
 
 def norm_quad_to_gx2_params(mu, v, quad, merge=True):
@@ -66,7 +66,7 @@ def norm_quad_to_gx2_params(mu, v, quad, merge=True):
 
     Returns
     -------
-    w, k, lambda_, s, m
+    w, k, l, s, m
     """
     mu = np.asarray(mu, dtype=float).ravel()
     v = np.asarray(v, dtype=float)
@@ -95,12 +95,12 @@ def norm_quad_to_gx2_params(mu, v, quad, merge=True):
         w, ic = uniquetol(d[nz])
         k = np.bincount(ic, minlength=w.size).astype(float)
         b_sq_sum = np.bincount(ic, weights=b[nz] ** 2, minlength=w.size)
-        lambda_ = b_sq_sum / (4 * w ** 2)
+        l = b_sq_sum / (4 * w ** 2)
     else:
         w = d[nz].copy()
         k = np.ones(w.size)
-        lambda_ = b[nz] ** 2 / (4 * w ** 2)
+        l = b[nz] ** 2 / (4 * w ** 2)
 
-    m = q0 - np.dot(w, lambda_)
+    m = q0 - np.dot(w, l)
     s = np.linalg.norm(b[~nz])
-    return w, k, lambda_, s, m
+    return w, k, l, s, m

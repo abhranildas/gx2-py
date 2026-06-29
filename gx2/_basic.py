@@ -9,7 +9,7 @@ from ._helpers import asrow
 from ._convert import gx2_to_norm_quad_params
 
 
-def stat(w, k, lambda_, s, m):
+def stat(w, k, l, s, m):
     """Mean and variance of a generalized chi-square distribution.
 
     Parameters
@@ -18,7 +18,7 @@ def stat(w, k, lambda_, s, m):
         Weights of the non-central chi-square terms.
     k : array_like
         Degrees of freedom of the non-central chi-square terms.
-    lambda_ : array_like
+    l : array_like
         Non-centrality parameters of the non-central chi-square terms.
     s : float
         Scale (standard deviation) of the added normal term.
@@ -34,13 +34,13 @@ def stat(w, k, lambda_, s, m):
     """
     w = asrow(w)
     k = asrow(k)
-    lambda_ = asrow(lambda_)
-    mu = float(np.dot(w, k + lambda_) + m)
-    v = float(2 * np.dot(w ** 2, k + 2 * lambda_) + s ** 2)
+    l = asrow(l)
+    mu = float(np.dot(w, k + l) + m)
+    v = float(2 * np.dot(w ** 2, k + 2 * l) + s ** 2)
     return mu, v
 
 
-def char(t, w, k, lambda_, s, m):
+def char(t, w, k, l, s, m):
     """Characteristic function of a generalized chi-square distribution.
 
     Parameters
@@ -51,7 +51,7 @@ def char(t, w, k, lambda_, s, m):
         Weights of the non-central chi-square terms.
     k : array_like
         Degrees of freedom of the non-central chi-square terms.
-    lambda_ : array_like
+    l : array_like
         Non-centrality parameters of the non-central chi-square terms.
     s : float
         Scale (standard deviation) of the added normal term.
@@ -65,18 +65,18 @@ def char(t, w, k, lambda_, s, m):
     """
     w = asrow(w)
     k = asrow(k)
-    lambda_ = asrow(lambda_)
+    l = asrow(l)
     t = np.asarray(t, dtype=float)
     tf = t.ravel()
     tc = tf[:, None]  # column
 
-    term = np.sum((w * lambda_) / (1 - 2j * tc * w), axis=1)
+    term = np.sum((w * l) / (1 - 2j * tc * w), axis=1)
     denom = np.prod((1 - 2j * w * tc) ** (k / 2), axis=1)
     phi = np.exp(1j * m * tf + 1j * tf * term - s ** 2 * tf ** 2 / 2) / denom
     return phi.reshape(t.shape)
 
 
-def rnd(w, k, lambda_, s, m, size=None, method="sum"):
+def rnd(w, k, l, s, m, size=None, method="sum"):
     """Generate generalized chi-square random numbers.
 
     Parameters
@@ -85,7 +85,7 @@ def rnd(w, k, lambda_, s, m, size=None, method="sum"):
         Weights of the non-central chi-square terms.
     k : array_like
         Degrees of freedom of the non-central chi-square terms.
-    lambda_ : array_like
+    l : array_like
         Non-centrality parameters of the non-central chi-square terms.
     s : float
         Scale (standard deviation) of the added normal term.
@@ -106,7 +106,7 @@ def rnd(w, k, lambda_, s, m, size=None, method="sum"):
     """
     w = asrow(w)
     k = asrow(k)
-    lambda_ = asrow(lambda_)
+    l = asrow(l)
 
     if size is None:
         shape = ()
@@ -118,7 +118,7 @@ def rnd(w, k, lambda_, s, m, size=None, method="sum"):
     method = str(method).lower()
     if method == "sum":
         r = np.zeros(shape)
-        for wi, ki, li in zip(w, k, lambda_):
+        for wi, ki, li in zip(w, k, l):
             if li == 0:
                 r = r + wi * chi2.rvs(df=ki, size=shape)
             else:
@@ -129,7 +129,7 @@ def rnd(w, k, lambda_, s, m, size=None, method="sum"):
             r = r + m
         return r
     elif method == "norm_quad":
-        quad = gx2_to_norm_quad_params(w, k, lambda_, s, m)
+        quad = gx2_to_norm_quad_params(w, k, l, s, m)
         q1 = np.asarray(quad["q1"]).ravel()
         q2 = np.asarray(quad["q2"])
         q0 = quad["q0"]

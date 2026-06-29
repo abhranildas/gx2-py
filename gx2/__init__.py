@@ -12,7 +12,7 @@ A generalized chi-square is parametrised by:
 
     w        weights of the non-central chi-square terms
     k        their degrees of freedom
-    lambda_  their non-centralities (named ``lambda_`` since ``lambda`` is a
+    l  their non-centralities (named ``l`` since ``lambda`` is a
              Python keyword)
     s        scale of the added normal term
     m        offset
@@ -34,7 +34,7 @@ from ._ray import (cdf_ray, pdf_ray, ray_integrand, int_norm_ray,
 from ._helpers import (log_sum_exp, signed_log_sum_exp, phi_ray,
                        Phibar_ray_split, Phibar_sym, prob_ray_sym, standard_quad)
 
-__version__ = "1.0.0"
+__version__ = "1.0.2"
 
 __all__ = [
     # core distribution API
