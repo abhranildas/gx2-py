@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77.0.3"]
+requires = ["setuptools>=77.0.3", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "gx2"
-version = "1.0.3"
+dynamic = ["version"]
 description = "Statistics, pdf, cdf, inverse cdf and random numbers of the generalized chi-square distribution"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -50,3 +50,9 @@ docs = ["jupyter", "matplotlib>=3.4"]
 
 [tool.setuptools]
 packages = ["gx2"]
+
+[tool.setuptools_scm]
+# Version is derived from the latest git tag (e.g. tag "v1.0.4" -> "1.0.4").
+# An exact tag gives a clean release version; commits after a tag get a
+# dev/local suffix (which is fine for local installs, never for PyPI).
+local_scheme = "no-local-version"

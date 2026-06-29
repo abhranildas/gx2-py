@@ -17,6 +17,8 @@ jobs:
       contents: write   # to attach the built files to the GitHub Release
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # fetch all tags so setuptools_scm can read the version
 
       - uses: actions/setup-python@v5
         with:
