@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gx2"
-version = "1.0.2"
+version = "1.0.3"
 description = "Statistics, pdf, cdf, inverse cdf and random numbers of the generalized chi-square distribution"
 readme = "README.md"
 requires-python = ">=3.9"
