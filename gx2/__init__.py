@@ -28,7 +28,7 @@ from ._basic import stat, char, rnd
 from ._convert import gx2_to_norm_quad_params, norm_quad_to_gx2_params
 from ._distribution import cdf, pdf, inv, log_cdf
 from ._methods import (imhof, imhof_integrand, ruben, ifft,
-                       pearson, cdf_pearson, tail, ellipse)
+                       pearson, tail, ellipse)
 from ._ray import (cdf_ray, pdf_ray, ray_integrand, int_norm_ray,
                    norm_prob_across_rays, norm_prob_across_angles)
 from ._helpers import (log_sum_exp, signed_log_sum_exp, phi_ray,
@@ -43,7 +43,7 @@ __all__ = [
     "gx2_to_norm_quad_params", "norm_quad_to_gx2_params",
     # individual methods
     "imhof", "imhof_integrand", "ruben", "ifft", "pearson",
-    "cdf_pearson", "tail", "ellipse",
+    "tail", "ellipse",
     # ray method internals
     "cdf_ray", "pdf_ray", "ray_integrand", "int_norm_ray",
     "norm_prob_across_rays", "norm_prob_across_angles",

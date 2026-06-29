@@ -111,6 +111,9 @@ def ray_integrand(x, n_z, quad, side="upper", output="prob", precision="log"):
         return p_rays, p_tiny_sum, sym_idx
 
     if precision == "log":
+        if not np.any(tiny_probs):
+            # no sub-realmin values; nothing to compute in the log domain
+            return p_rays, np.full(n_levels, -np.inf), sym_idx
         tiny3 = np.repeat(tiny_probs[:, :, None], 2, axis=2)
         z_tiny = np.full_like(z, np.nan)
         z_tiny[tiny3] = z[tiny3]

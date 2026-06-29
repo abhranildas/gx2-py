@@ -31,14 +31,15 @@ def gx2_to_norm_quad_params(w, k, l, s, m):
     k = asrow(k)
     l = asrow(l)
 
-    q2_parts = []
-    q1_parts = []
-    for wi, ki, li in zip(w, k, l):
-        ki = int(round(ki))
-        q2_parts.append(np.full(ki, wi))
-        q1_parts.append(np.concatenate(([wi * np.sqrt(li)], np.zeros(ki - 1))))
-    q2 = np.concatenate(q2_parts) if q2_parts else np.array([])
-    q1 = -2 * (np.concatenate(q1_parts) if q1_parts else np.array([]))
+    k_int = np.round(k).astype(int)
+    q2 = np.repeat(w, k_int).astype(float)   # each w_i, k_i times
+    n = int(k_int.sum())
+    q1 = np.zeros(n)
+    if n:
+        # put each w_i*sqrt(l_i) at the start of its block, 0 elsewhere
+        starts = np.concatenate(([0], np.cumsum(k_int)[:-1]))
+        q1[starts] = w * np.sqrt(l)
+    q1 = -2 * q1
 
     if s:
         q2 = np.append(q2, 0.0)

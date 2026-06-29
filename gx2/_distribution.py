@@ -23,6 +23,17 @@ def _is_full(x):
     return isinstance(x, str) and x.lower() == "full"
 
 
+def _check_method(method, w, s):
+    """Validate the same-sign-w, s==0 constraint shared by 'ruben'/'ellipse'."""
+    if s or not (np.all(w > 0) or np.all(w < 0)):
+        if method == "ruben":
+            raise ValueError("Ruben's method can only be used when all w are "
+                             "the same sign and s=0.")
+        elif method == "ellipse":
+            raise ValueError("The ellipse approximation can only be used when "
+                             "all w are the same sign and s=0.")
+
+
 # ===========================================================================
 # cdf
 # ===========================================================================
@@ -133,9 +144,7 @@ def cdf(x, w, k, l, s, m, side="lower", method="auto",
         p, p_err = imhof(x, w, k, l, s, m, side=side,
                          **_filter(imhof, kwargs))
     elif method == "ruben":
-        if s or not (np.all(w > 0) or np.all(w < 0)):
-            raise ValueError("Ruben's method can only be used when all w are "
-                             "the same sign and s=0.")
+        _check_method("ruben", w, s)
         p, p_err = ruben(x, w, k, l, m, side=side,
                          **_filter(ruben, kwargs))
     elif method == "tail":
@@ -143,9 +152,7 @@ def cdf(x, w, k, l, s, m, side="lower", method="auto",
     elif method == "pearson":
         p = pearson(x, w, k, l, s, m, side=side, **_filter(pearson, kwargs))
     elif method == "ellipse":
-        if s or not (np.all(w > 0) or np.all(w < 0)):
-            raise ValueError("The ellipse approximation can only be used when "
-                             "all w are the same sign and s=0.")
+        _check_method("ellipse", w, s)
         p, p_err = ellipse(x, w, k, l, m, side=side,
                            **_filter(ellipse, kwargs))
     else:
@@ -234,9 +241,7 @@ def pdf(x, w, k, l, s, m, side="lower", method="auto", diff=False,
             f, _ = imhof(x, w, k, l, s, m, output="pdf",
                          **_filter(imhof, kwargs))
         elif method == "ruben":
-            if s or not (np.all(w > 0) or np.all(w < 0)):
-                raise ValueError("Ruben's method can only be used when all w are "
-                                 "the same sign and s=0.")
+            _check_method("ruben", w, s)
             f, _ = ruben(x, w, k, l, m, output="pdf",
                          **_filter(ruben, kwargs))
         elif method == "tail":
@@ -246,9 +251,7 @@ def pdf(x, w, k, l, s, m, side="lower", method="auto", diff=False,
             f = pearson(x, w, k, l, s, m, side=side, output="pdf",
                         **_filter(pearson, kwargs))
         elif method == "ellipse":
-            if s or not (np.all(w > 0) or np.all(w < 0)):
-                raise ValueError("The ellipse approximation can only be used when "
-                                 "all w are the same sign and s=0.")
+            _check_method("ellipse", w, s)
             f, f_err = ellipse(x, w, k, l, m, side=side, output="pdf",
                                **_filter(ellipse, kwargs))
         elif method == "ray":

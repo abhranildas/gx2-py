@@ -2,13 +2,13 @@
 Imhof, Ruben, IFFT, Pearson, infinite-tail and ellipse approximations.
 
 Mirrors gx2_imhof.m, gx2_imhof_integrand.m, gx2_ruben.m, gx2_ifft.m,
-gx2_pearson.m, gx2cdf_pearson.m, gx2_tail.m and gx2_ellipse.m.
+gx2_pearson.m, gx2_tail.m and gx2_ellipse.m.
 """
 
 import warnings
 import numpy as np
 from scipy.stats import ncx2, chi2
-from scipy.integrate import quad
+from scipy.integrate import quad_vec
 from scipy.interpolate import interp1d
 from scipy.special import gamma as _gamma
 
@@ -66,7 +66,7 @@ def _imhof_integrand_mp(u, x, w, k, l, s, m, output):
 
 
 def imhof(x, w, k, l, s, m, side="lower", output="cdf",
-          precision="basic", AbsTol=1e-10, RelTol=1e-2):
+          precision="basic", AbsTol=1e-10, RelTol=1e-6):
     """Imhof-Davies method for the cdf (or pdf) of a generalized chi-square."""
     w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
@@ -74,10 +74,11 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
 
     integral = np.empty(xf.size)
     if precision == "basic":
-        for i, xi in enumerate(xf):
-            integral[i] = quad(imhof_integrand, 0, np.inf,
-                               args=(xi, w, k, l, s, m, output),
-                               epsabs=AbsTol, epsrel=RelTol, limit=200)[0]
+        # integrate over all x points in one adaptive quadrature: for each
+        # node u, the x-independent parts of the integrand (theta's sum over
+        # terms, and rho) are computed once and shared across all x.
+        integral = quad_vec(lambda u: imhof_integrand(u, xf, w, k, l, s, m, output),
+                            0, np.inf, epsabs=AbsTol, epsrel=RelTol)[0]
     elif precision == "vpa":
         for i, xi in enumerate(xf):
             val = mp.quad(lambda u: _imhof_integrand_mp(u, xi, w, k, l, s, m, output),
@@ -265,31 +266,6 @@ def pearson(x, w, k, l, s, m, side="lower", output="cdf"):
     return p
 
 
-def cdf_pearson(x, w, k, l, m, side="lower", output="cdf"):
-    """Pearson's 3-moment approximation without a normal term."""
-    w = asrow(w); k = asrow(k); l = asrow(l)
-    x = np.asarray(x, dtype=float)
-    j = np.arange(1, 4).reshape(-1, 1)
-    c = np.sum((w ** j) * (j * l + k), axis=1)
-    h = c[1] ** 3 / c[2] ** 2
-    if c[2] > 0:
-        y = (x - m - c[0]) * np.sqrt(h / c[1]) + h
-        if output == "cdf":
-            p = chi2.sf(y, h) if side == "upper" else chi2.cdf(y, h)
-        else:
-            p = np.sqrt(h / c[1]) * chi2.pdf(y, h)
-    else:
-        c = np.sum(((-w) ** j) * (j * l + k), axis=1)
-        y = (-(x - m) - c[0]) * np.sqrt(h / c[1]) + h
-        if output == "cdf":
-            p = chi2.cdf(y, h) if side == "upper" else chi2.sf(y, h)
-        else:
-            p = np.sqrt(h / c[1]) * chi2.pdf(y, h)
-    flag = (p < 0) | (p > 1)
-    p = np.clip(p, 0, 1)
-    return p, flag
-
-
 # ===========================================================================
 # Das's infinite-tail approximation
 # ===========================================================================
@@ -423,7 +399,7 @@ def ellipse(x, w, r, l, m, side="lower", output="cdf", x_scale="linear"):
                          - np.log10(np.sum(ellipse_center ** 2 * ellipse_weights)) / 2)
     else:
         if x_scale == "linear":
-            p_rel_err = x_eff / 2 * np.min(ellipse_weights)
+            p_rel_err = x_eff / (2 * np.min(ellipse_weights))
         else:
             p_rel_err = log10_x - np.log10(2 * np.min(ellipse_weights))
 
