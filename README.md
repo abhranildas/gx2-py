@@ -9,15 +9,6 @@ and random numbers of the **generalized chi-square distribution**.
 This is the python port of the
 [MATLAB toolbox](https://www.mathworks.com/matlabcentral/fileexchange/85028-generalized-chi-square-distribution).
 
-## Author and citation
-
-Abhranil Das, Center for Perceptual Systems, The University of Texas at Austin.
-Bugs / comments / questions / suggestions to abhranil.das@utexas.edu.
-
-If you use this code, please cite:
- - [Methods to integrate multinormals and compute classification measures](https://arxiv.org/abs/2012.14331)
- - New methods to compute the generalized chi-square distribution: [journal](https://www.tandfonline.com/doi/abs/10.1080/00949655.2025.2501401) / [arxiv](https://arxiv.org/abs/2404.05062)
-
 A generalized chi-square variable is a weighted sum of independent non-central
 chi-square variables plus a normal variable — equivalently, the quadratic form
 of a normal random vector. It is parametrized by:
@@ -29,6 +20,15 @@ of a normal random vector. It is parametrized by:
 | `l` | their non-centralities (named `l` because `lambda` is a Python keyword) |
 | `s`       | scale (standard deviation) of the added normal term |
 | `m`       | constant offset |
+
+## Author and citation
+
+Abhranil Das, Center for Perceptual Systems, The University of Texas at Austin.
+Bugs / comments / questions / suggestions to abhranil.das@utexas.edu.
+
+If you use this code, please cite:
+ - [Methods to integrate multinormals and compute classification measures](https://arxiv.org/abs/2012.14331)
+ - New methods to compute the generalized chi-square distribution: [journal](https://www.tandfonline.com/doi/abs/10.1080/00949655.2025.2501401) / [arxiv](https://arxiv.org/abs/2404.05062)
 
 ## Installation
 
