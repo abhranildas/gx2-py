@@ -19,9 +19,9 @@ A generalized chi-square is parametrised by:
 
 If you use this code, please cite:
   1. A method to integrate and classify normal distributions
-     (https://arxiv.org/abs/2012.14331)
-  2. New methods for computing the generalized chi-square distribution
-     (https://arxiv.org/abs/2404.05062)
+     (https://doi.org/10.1167/jov.21.10.1)
+  2. New methods to compute the generalized chi-square distribution
+     (https://www.tandfonline.com/doi/abs/10.1080/00949655.2025.2501401)
 """
 
 from ._basic import stat, char, rnd
