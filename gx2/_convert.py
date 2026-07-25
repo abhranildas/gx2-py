@@ -48,7 +48,7 @@ def gx2_to_norm_quad_params(w, k, l, s, m):
     return {"q2": np.diag(q2), "q1": q1.astype(float), "q0": float(np.dot(w, l) + m)}
 
 
-def norm_quad_to_gx2_params(mu, v, quad, merge=True):
+def norm_quad_to_gx2_params(mu, v, quad, merge=True, return_aux=False):
     """Parameters of the generalized chi-square distribution of a quadratic
     form ``q(x) = x' q2 x + q1' x + q0`` of a normal vector ``x ~ N(mu, v)``.
 
@@ -64,10 +64,19 @@ def norm_quad_to_gx2_params(mu, v, quad, merge=True):
         If True (default), merge non-central chi-square components with
         close-enough weights into single components. Set False to return all
         raw exact components.
+    return_aux : bool, optional
+        If True, also return the eigen-structure of the standardized
+        quadratic (see Returns), reused by ``cdf_grad_norm_quad`` so it need not
+        redo the eigendecomposition.
 
     Returns
     -------
     w, k, l, s, m
+    aux : dict, optional
+        Only returned when ``return_aux`` is True. The full (pre-merge)
+        eigen-structure of the standardized quadratic ``S @ q2_sym @ S``:
+        ``S`` (``= Sigma^{1/2}``), ``V`` (eigenvectors), ``d`` (eigenvalues,
+        1-D array), and ``b`` (``= V.T @ S @ (2 * q2_sym @ mu + q1)``).
     """
     mu = np.asarray(mu, dtype=float).ravel()
     v = np.asarray(v, dtype=float)
@@ -78,20 +87,27 @@ def norm_quad_to_gx2_params(mu, v, quad, merge=True):
     q2_sym = 0.5 * (q2_in + q2_in.T)
 
     # sqrtm(v) avoiding small negative eigenvalues
-    d, R = np.linalg.eigh(v)
-    d = np.where(d < 0, 0.0, d)
-    sqrt_v = R @ np.diag(np.sqrt(d)) @ R.T
+    dv, R = np.linalg.eigh(v)
+    dv = np.where(dv < 0, 0.0, dv)
+    sqrt_v = R @ np.diag(np.sqrt(dv)) @ R.T
 
     q2 = sqrt_v @ q2_sym @ sqrt_v
     q2 = (q2 + q2.T) / 2
     q1 = sqrt_v @ (2 * q2_sym @ mu + q1_in)
     q0 = float(mu @ q2_sym @ mu + q1_in @ mu + q0_in)
 
-    d2, R2 = np.linalg.eigh(q2)
-    d = d2
+    d, R2 = np.linalg.eigh(q2)
     b = (R2.T @ q1)
 
-    nz = d != 0
+    # Split into nonzero (chi-square) and effectively-zero (linear, feeding the
+    # normal term s) eigenvalues using a relative rank tolerance rather than an
+    # exact d==0 test: a numerically tiny eigenvalue from a rank-deficient q2
+    # would otherwise be kept as a chi-square with a near-zero weight and a
+    # blown-up non-centrality b^2/(4w^2), which overflows the Ruben series
+    # downstream.
+    dtol = np.max(np.abs(d)) * d.size * np.finfo(float).eps
+    nz = np.abs(d) > dtol
+
     if merge:
         w, ic = uniquetol(d[nz])
         k = np.bincount(ic, minlength=w.size).astype(float)
@@ -104,4 +120,8 @@ def norm_quad_to_gx2_params(mu, v, quad, merge=True):
 
     m = q0 - np.dot(w, l)
     s = np.linalg.norm(b[~nz])
+
+    if return_aux:
+        aux = {"S": sqrt_v, "V": R2, "d": d, "b": b}
+        return w, k, l, s, m, aux
     return w, k, l, s, m

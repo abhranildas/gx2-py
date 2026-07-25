@@ -3,10 +3,11 @@ Mirrors gx2cdf.m, gx2pdf.m, gx2inv.m and log_gx2cdf.m.
 """
 
 import inspect
+import warnings
 import numpy as np
 from scipy.stats import norm
 
-from ._helpers import asrow, fzero
+from ._helpers import asrow, fzero, ImhofClipWarning
 from ._basic import stat
 from ._methods import (imhof, ruben, ifft, pearson, tail,
                        ellipse, _ncx2cdf)
@@ -280,6 +281,84 @@ def pdf(x, w, k, l, s, m, side="lower", method="auto", diff=False,
 # inverse cdf
 # ===========================================================================
 
+def _inv_newton(G, dG, p, x0, sd):
+    """Roots of the monotone residual ``r(x) = G(x) - p`` by Newton with
+    bisection fallback (the classic rtsafe scheme), solving every element of
+    ``p`` at once. ``G`` and ``dG`` accept a vector of iterates and return
+    the cdf/pdf at all of them in one Imhof sweep, so each iteration costs
+    two integrals for the whole batch rather than two per probability.
+    ``xl``/``xh`` label the bracket ends by the sign of ``r``, so it works
+    whether ``G`` increases (lower tail) or decreases (upper tail). Any
+    element that cannot be bracketed falls back to a scalar :func:`fzero`.
+    Mirrors the ``gx2inv_newton`` subfunction of ``gx2inv.m``.
+    """
+    tol = 4 * np.finfo(float).eps
+    maxit = 100
+    if not np.isfinite(sd) or sd <= 0:
+        sd = 1.0
+
+    with warnings.catch_warnings():
+        # intermediate cdf/pdf evaluations can clip tiny tail values (a
+        # benign Imhof warning); silence just that during the solve
+        warnings.simplefilter("ignore", ImhofClipWarning)
+
+        # Bracket every probability with one symmetric window about x0,
+        # widened until a sign change straddles the residual for all of
+        # them. The ends a,b stay scalar during expansion (fa,fb are shaped
+        # like p); monotonicity of G keeps a bracket valid once found, so
+        # widening never breaks earlier ones.
+        step = max(sd, 1e-3)
+        a = x0 - step; b = x0 + step
+        fa = G(a) - p; fb = G(b) - p
+        it = 0
+        while np.any(fa * fb > 0) and it < 80:
+            step *= 1.6
+            a -= step; b += step
+            fa = G(a) - p; fb = G(b) - p
+            it += 1
+
+        unbr = fa * fb > 0                            # elements never bracketed
+        lowa = fa < 0                                  # where a is the low end of r
+        xl = np.where(lowa, a, b)
+        xh = np.where(lowa, b, a)
+
+        x = np.full(p.shape, 0.5 * (a + b))
+        dxold = np.full(p.shape, abs(b - a))
+        dx = dxold.copy()
+        fx = G(x) - p
+        dfx = dG(x)
+        act = ~unbr                                    # iterate the bracketed ones
+
+        for _ in range(maxit):
+            # per-element choice: bisect when Newton leaves the bracket,
+            # stalls, or has a bad derivative; otherwise take the Newton step
+            cond1 = ((x - xh) * dfx - fx) * ((x - xl) * dfx - fx) > 0
+            cond2 = np.abs(2 * fx) > np.abs(dxold * dfx)
+            cond3 = dfx == 0
+            cond4 = ~np.isfinite(dfx)
+            bis = cond1 | cond2 | cond3 | cond4
+            dxold = dx
+            dxb = 0.5 * (xh - xl); xb = xl + dxb       # bisection candidate
+            with np.errstate(divide="ignore", invalid="ignore"):
+                dxn = fx / dfx                          # Newton candidate
+            xn = x - dxn
+            dx = np.where(bis, dxb, dxn)               # select (avoids 0*NaN)
+            x = np.where(bis, xb, xn)
+            if np.all(np.abs(dx[act]) <= tol * (1 + np.abs(x[act]))):
+                break
+            fx = G(x) - p
+            dfx = dG(x)
+            lo = fx < 0
+            xl = np.where(lo, x, xl)
+            xh = np.where(~lo, x, xh)                  # tighten the bracket
+
+    bad = unbr | ~np.isfinite(x)                       # scalar fzero for stragglers
+    for j in np.flatnonzero(bad):
+        pj = p[j]
+        x[j] = fzero(lambda xx: float(G(np.asarray(xx))) - pj, x0)
+    return x
+
+
 def inv(p, w, k, l, s, m, side="lower", method="auto", **kwargs):
     """Inverse cdf (quantile function) of a generalized chi-square distribution.
 
@@ -336,18 +415,39 @@ def inv(p, w, k, l, s, m, side="lower", method="auto", **kwargs):
         else:
             x = np.zeros_like(pp)
     else:
-        mu, _ = stat(w, k, l, s, m)
+        mu, v = stat(w, k, l, s, m)
+        sd = np.sqrt(v)
+        x = np.empty_like(p)
 
-        def solve_one(pi):
-            if pi > 0:
-                f = lambda xx: cdf(xx, w, k, l, s, m, side=side,
-                                   method=method, **kwargs) - pi
-            else:
+        # Safeguarded Newton on cdf, using the analytic pdf as the
+        # derivative (dG/dx = +-f). Bracketed with a bisection fallback, so
+        # it is as robust as fzero but needs fewer cdf evaluations. All
+        # requested probabilities are solved simultaneously: each Newton step
+        # evaluates the cdf and pdf at the whole vector of iterates in one
+        # shared Imhof quadrature sweep, so the integral cost scales with the
+        # number of iterations, not with p.size. Negative/zero entries are a
+        # log-probability request and stay on the scalar fzero path below.
+        pos = p > 0
+        if np.any(pos):
+            dsgn = -1.0 if side == "upper" else 1.0
+
+            def G(xx):
+                return np.asarray(cdf(xx, w, k, l, s, m, side=side,
+                                      method=method, **kwargs), dtype=float)
+
+            def dG(xx):
+                return dsgn * np.asarray(pdf(xx, w, k, l, s, m,
+                                             method=method, **kwargs), dtype=float)
+
+            x[pos] = _inv_newton(G, dG, p[pos], mu, sd)
+
+        if np.any(~pos):
+            def solve_log(pi):
                 f = lambda xx: log_cdf(xx, w, k, l, s, m, side=side,
                                        method=method, **kwargs) - pi
-            return fzero(f, mu)
+                return fzero(f, mu)
 
-        x = np.array([solve_one(pi) for pi in p])
+            x[~pos] = np.array([solve_log(pi) for pi in p[~pos]])
 
     x = np.asarray(x)
     if x.size == 1:

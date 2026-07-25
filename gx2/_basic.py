@@ -2,15 +2,18 @@
 Mirrors ``gx2stat.m``, ``gx2char.m`` and ``gx2rnd.m``.
 """
 
+import warnings
 import numpy as np
 from scipy.stats import ncx2, chi2, norm
+from scipy.optimize import minimize_scalar
 
 from ._helpers import asrow
 from ._convert import gx2_to_norm_quad_params
 
 
-def stat(w, k, l, s, m):
-    """Mean and variance of a generalized chi-square distribution.
+def stat(w, k, l, s, m, mode=False):
+    """Mean, variance, and (optionally) mode of a generalized chi-square
+    distribution.
 
     Parameters
     ----------
@@ -24,6 +27,13 @@ def stat(w, k, l, s, m):
         Scale (standard deviation) of the added normal term.
     m : float
         Constant offset added to the distribution.
+    mode : bool, optional
+        If True, also return the mode. Unlike the mean and variance, it has
+        no closed form, so it is located numerically as the root of the
+        density derivative ``f'(x) = 0`` (using the analytic ``f'`` from
+        :func:`gx2._dens_deriv.dens_deriv`), seeded at the mean. It assumes a
+        single interior peak; for a density with no interior mode it falls
+        back to maximizing the pdf on a wide interval.
 
     Returns
     -------
@@ -31,13 +41,37 @@ def stat(w, k, l, s, m):
         Mean.
     v : float
         Variance.
+    mode_x : float, optional
+        Only returned when ``mode`` is True.
     """
     w = asrow(w)
     k = asrow(k)
     l = asrow(l)
     mu = float(np.dot(w, k + l) + m)
     v = float(2 * np.dot(w ** 2, k + 2 * l) + s ** 2)
-    return mu, v
+
+    if not mode:
+        return mu, v
+
+    # deferred imports break the stat <-> dens_deriv/pdf import cycle
+    from ._helpers import fzero, ImhofClipWarning
+    from ._dens_deriv import dens_deriv
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ImhofClipWarning)
+        try:
+            mode_x = fzero(lambda xx: dens_deriv(xx, w, k, l, s, m, 1), mu)
+        except Exception:
+            mode_x = np.nan
+
+        if not np.isfinite(mode_x):
+            from ._distribution import pdf
+            sd = np.sqrt(v)
+            res = minimize_scalar(lambda xx: -pdf(xx, w, k, l, s, m),
+                                  bounds=(mu - 8 * sd, mu + 8 * sd),
+                                  method="bounded")
+            mode_x = float(res.x)
+    return mu, v, mode_x
 
 
 def char(t, w, k, l, s, m):

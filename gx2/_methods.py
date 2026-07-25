@@ -6,6 +6,7 @@ gx2_pearson.m, gx2_tail.m and gx2_ellipse.m.
 """
 
 import warnings
+from math import comb
 import numpy as np
 from scipy.stats import ncx2, chi2
 from scipy.integrate import quad_vec
@@ -14,7 +15,7 @@ from scipy.special import gamma as _gamma
 
 import mpmath as mp
 
-from ._helpers import asrow, uniquetol
+from ._helpers import asrow, uniquetol, ImhofClipWarning
 from ._basic import stat, char
 
 REALMIN = np.finfo(float).tiny  # ~2.2e-308
@@ -38,18 +39,51 @@ def _ncx2pdf(x, df, nc):
 # Imhof-Davies method
 # ===========================================================================
 
-def imhof_integrand(u, x, w, k, l, s, m, output):
-    """Imhof integrand; ``w,k,l`` are 1-D."""
+def imhof_integrand(u, x, w, k, l, s, m, output, idx=None, nx=0):
+    """Imhof integrand for the generalized chi-square inversion; ``w,k,l`` are
+    1-D. Beyond the plain cdf/pdf it also returns the exact integrands for
+    parameter-gradient and -Hessian components (no finite differencing).
+
+    output:
+        ``'cdf'``       cdf integrand.
+        ``'pdf'``       pdf integrand.
+        ``'dens'``      ``nx``-th x-derivative of the pdf, f^(nx) (nx>=1
+                        gives f', f'', ...).
+        ``'k_deriv'``   d/dk_idx of the cdf, with ``nx`` extra x-derivatives
+                        (``idx`` a single 0-based component index).
+        ``'kk_deriv'``  d^2/(dk_idx[0] dk_idx[1]) of the cdf, with ``nx``
+                        extra x-derivatives (``idx`` a length-2 sequence).
+
+    The derivative modes use the complex integrand ``Z = exp(i*theta)/rho``
+    together with the rule that each x-derivative multiplies ``Z`` by
+    ``-(i*u/2)``, and that d/dk_j brings down the factor
+    ``ell_j = -1/2*log(1 - i*w_j*u)``.
+    """
     w2u2 = w ** 2 * u ** 2
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
         theta = np.sum(k * np.arctan(w * u) + (l * (w * u)) / (1 + w2u2)) / 2 + u * (m - x) / 2
         rho = np.prod(((1 + w2u2) ** (k / 4)) * np.exp((w2u2 * l) / (2 * (1 + w2u2)))) * np.exp(u ** 2 * s ** 2 / 8)
         if output == "cdf":
             return np.sin(theta) / (u * rho)
-        return np.cos(theta) / rho
+        elif output == "pdf":
+            return np.cos(theta) / rho
+        else:
+            Z = np.exp(1j * theta) / rho              # phi(t)*exp(-i*t*x), with u=2t
+            dfac = (-(1j * u / 2)) ** nx               # nx x-derivatives (R2)
+            if output == "dens":
+                return np.real(dfac * Z)
+            elif output == "k_deriv":
+                ell = -0.5 * np.log(1 - 1j * w[idx] * u)
+                return -np.imag(ell * dfac * Z) / u
+            elif output == "kk_deriv":
+                ell = ((-0.5 * np.log(1 - 1j * w[idx[0]] * u))
+                       * (-0.5 * np.log(1 - 1j * w[idx[1]] * u)))
+                return -np.imag(ell * dfac * Z) / u
+            else:
+                raise ValueError("unknown output %r" % output)
 
 
-def _imhof_integrand_mp(u, x, w, k, l, s, m, output):
+def _imhof_integrand_mp(u, x, w, k, l, s, m, output, idx=None, nx=0):
     u = mp.mpf(u)
     theta = mp.mpf(0)
     rho = mp.mpf(1)
@@ -62,12 +96,30 @@ def _imhof_integrand_mp(u, x, w, k, l, s, m, output):
     rho *= mp.e ** (u ** 2 * mp.mpf(s) ** 2 / 8)
     if output == "cdf":
         return mp.sin(theta) / (u * rho)
-    return mp.cos(theta) / rho
+    elif output == "pdf":
+        return mp.cos(theta) / rho
+    else:
+        Z = mp.e ** (1j * theta) / rho
+        dfac = (-(1j * u / 2)) ** nx
+        if output == "dens":
+            return mp.re(dfac * Z)
+        elif output == "k_deriv":
+            ell = -0.5 * mp.log(1 - 1j * mp.mpf(w[idx]) * u)
+            return -mp.im(ell * dfac * Z) / u
+        elif output == "kk_deriv":
+            ell = ((-0.5 * mp.log(1 - 1j * mp.mpf(w[idx[0]]) * u))
+                   * (-0.5 * mp.log(1 - 1j * mp.mpf(w[idx[1]]) * u)))
+            return -mp.im(ell * dfac * Z) / u
+        else:
+            raise ValueError("unknown output %r" % output)
 
 
 def imhof(x, w, k, l, s, m, side="lower", output="cdf",
-          precision="basic", AbsTol=1e-10, RelTol=1e-6):
-    """Imhof-Davies method for the cdf (or pdf) of a generalized chi-square."""
+          idx=None, nx=0, precision="basic", AbsTol=1e-10, RelTol=1e-6):
+    """Imhof-Davies method for the cdf/pdf of a generalized chi-square, and
+    for the exact (non-finite-differenced) parameter-derivative integrands
+    used by ``cdf_grad_gx2``/``cdf_grad_norm_quad`` -- see :func:`imhof_integrand`
+    for the ``output`` modes."""
     w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
     xf = x.ravel()
@@ -77,11 +129,11 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
         # integrate over all x points in one adaptive quadrature: for each
         # node u, the x-independent parts of the integrand (theta's sum over
         # terms, and rho) are computed once and shared across all x.
-        integral = quad_vec(lambda u: imhof_integrand(u, xf, w, k, l, s, m, output),
+        integral = quad_vec(lambda u: imhof_integrand(u, xf, w, k, l, s, m, output, idx, nx),
                             0, np.inf, epsabs=AbsTol, epsrel=RelTol)[0]
     elif precision == "vpa":
         for i, xi in enumerate(xf):
-            val = mp.quad(lambda u: _imhof_integrand_mp(u, xi, w, k, l, s, m, output),
+            val = mp.quad(lambda u: _imhof_integrand_mp(u, xi, w, k, l, s, m, output, idx, nx),
                           [0, mp.inf])
             integral[i] = float(val)
     else:
@@ -96,14 +148,21 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
             p = 0.5 + integral / np.pi
         errflag = (p < 0) | (p > 1)
         p = np.minimum(p, 1)
-    else:
+    elif output == "pdf":
         p = integral / (2 * np.pi)
         errflag = p < 0
+    else:
+        # signed derivative outputs (no probability clipping):
+        #   'dens'      x-derivatives of the pdf, normalized by 1/(2*pi)
+        #   'k_deriv'   d/dk of the cdf (and its x-derivatives), normalized by 1/pi
+        #   'kk_deriv'  d^2/(dk dk) of the cdf, normalized by 1/pi
+        p = integral / (2 * np.pi) if output == "dens" else integral / np.pi
+        errflag = np.zeros_like(p, dtype=bool)
 
     if np.any(errflag):
         warnings.warn("Imhof method output(s) too close to limit to compute "
                       "exactly, so clipping. Check the errflag output, and try "
-                      "stricter tolerances.")
+                      "stricter tolerances.", ImhofClipWarning)
         p = np.maximum(p, 0)
     return p, errflag
 
@@ -112,18 +171,19 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
 # Ruben's series method
 # ===========================================================================
 
-def ruben(x, w, k, l, m, side="lower", output="cdf", n_ruben=1000):
-    """Ruben's series. Requires all ``w`` the same sign and ``s == 0``."""
+def _ruben_coeffs(w, k, l, n_ruben=1000):
+    """Ruben's series expansion coefficients. Depends only on ``w, k, l``
+    (and the term-count cap ``n_ruben``) -- not on the evaluation point ``x``
+    or offset ``m`` -- so callers evaluating many points against the same
+    ``(w, k, l)`` (e.g. the mixed-sign convolution's inner quadrature, which
+    samples one scalar point per callback) should compute this once and
+    reuse it via :func:`_ruben_eval`, rather than recomputing the series for
+    every point."""
     w = asrow(w); k = asrow(k); l = asrow(l)
-    x = np.asarray(x, dtype=float)
-    xf = x.ravel().astype(float).copy()
-
-    if not (np.all(w > 0) or np.all(w < 0)):
-        raise ValueError("Ruben's method needs all w the same sign.")
 
     w_pos = True
     if np.all(w < 0):
-        w = -w; xf = -xf; m = -m; w_pos = False
+        w = -w; w_pos = False
 
     beta = 0.90625 * np.min(w)
     M = np.sum(k)
@@ -132,15 +192,44 @@ def ruben(x, w, k, l, m, side="lower", output="cdf", n_ruben=1000):
     g = (np.sum(k * (1 - beta / w) ** n, axis=1)
          + (beta * n.ravel() * ((1 - beta / w) ** (n - 1) @ (l / w))))
 
+    # expansion coefficients, stopping once the leftover series mass is
+    # negligible. The a_j are nonnegative and sum to 1, so the tail mass
+    # 1-sum(a[:N]) both bounds the truncation error and decreases
+    # monotonically. The stop uses only this cheap coefficient recurrence --
+    # not the chi-square grid below -- so the term count N is fixed in a
+    # single pass, and the expensive evaluation is then done once at that
+    # reduced size. n_ruben is the safety cap; most cases converge in ~1e2
+    # terms well under it.
+    masstol = 1e-14
     a = np.full(n_ruben, np.nan)
     a[0] = np.sqrt(np.exp(-np.sum(l)) * beta ** M * np.prod(w ** (-k)))
     if a[0] < REALMIN:
         raise FloatingPointError("Underflow: some series coefficients are "
                                  "smaller than machine precision.")
+    cum = a[0]
+    N = n_ruben
     for j in range(1, n_ruben):
         a[j] = np.dot(np.flip(g[:j]), a[:j]) / (2 * j)
+        cum += a[j]
+        if 1 - cum < masstol:
+            N = j + 1
+            break
+    a = a[:N]
 
-    kgrid = (M + 2 * np.arange(n_ruben)).reshape(-1, 1)   # (n_ruben, 1)
+    return dict(a=a, N=N, beta=beta, M=M, w_pos=w_pos)
+
+
+def _ruben_eval(coeffs, x, m, side="lower", output="cdf", nx=0):
+    """Evaluate Ruben's series at ``x`` (offset ``m``) from coefficients
+    already computed by :func:`_ruben_coeffs`."""
+    a, N, beta, M, w_pos = (coeffs["a"], coeffs["N"], coeffs["beta"],
+                             coeffs["M"], coeffs["w_pos"])
+    x = np.asarray(x, dtype=float)
+    xf = x.ravel().astype(float).copy()
+    if not w_pos:
+        xf = -xf; m = -m
+
+    kgrid = (M + 2 * np.arange(N)).reshape(-1, 1)   # (N, 1)
     xgrid = ((xf - m) / beta).reshape(1, -1)              # (1, n_x)
 
     upper = (w_pos and side == "upper") or ((not w_pos) and side == "lower")
@@ -150,15 +239,65 @@ def ruben(x, w, k, l, m, side="lower", output="cdf", n_ruben=1000):
         else:
             F = chi2.cdf(xgrid, kgrid)
     else:
-        F = chi2.pdf(xgrid, kgrid)
+        F = _chi2pdf_nderiv(xgrid, kgrid, nx)   # nx-th y-derivative of the chi2 density
 
     p = a @ F  # (n_x,)
     if output == "pdf":
-        p = p / beta
+        # each x-derivative brings a factor 1/beta from y=(x-m)/beta; the
+        # flipped (all-negative-weight) frame contributes a factor (-1)^nx.
+        p = p / beta ** (nx + 1)
+        if not w_pos:
+            p = p * (-1) ** nx
 
-    p_err = (1 - np.sum(a)) * chi2.cdf((xf - m) / beta, M + 2 * n_ruben)
+    # truncation-error indicator: the leftover series mass (now negligible
+    # unless the n_ruben cap was hit) times the next central-chi-square factor
+    p_err = (1 - np.sum(a)) * chi2.cdf((xf - m) / beta, M + 2 * N)
 
     return p.reshape(x.shape), p_err.reshape(x.shape)
+
+
+def ruben(x, w, k, l, m, side="lower", output="cdf", nx=0, n_ruben=1000):
+    """Ruben's series. Requires all ``w`` the same sign and ``s == 0``.
+
+    Parameters
+    ----------
+    nx : int, optional
+        x-derivative order of the pdf (0 gives the plain pdf, the default).
+        Only defined for ``output='pdf'``.
+    """
+    if nx and output != "pdf":
+        raise ValueError("The x-derivative order 'nx' is only defined for "
+                         "the 'pdf' output.")
+
+    w_check = asrow(w)
+    if not (np.all(w_check > 0) or np.all(w_check < 0)):
+        raise ValueError("Ruben's method needs all w the same sign.")
+
+    coeffs = _ruben_coeffs(w, k, l, n_ruben=n_ruben)
+    return _ruben_eval(coeffs, x, m, side=side, output=output, nx=nx)
+
+
+def _chi2pdf_nderiv(y, nu, n):
+    """``n``-th derivative in ``y`` of the central chi-square density
+    ``g_nu(y)``. Uses the closed form
+    ``g_nu^(n)(y) = g_nu(y) * sum_{j=0}^n C(n,j)(-1/2)^{n-j} (a)_j y^{-j}``,
+    where ``a = nu/2-1`` and ``(a)_j`` is the falling factorial. Exact for
+    any ``nu>0`` (no negative-dof chi-square ever appears). The derivative
+    vanishes on the support edge ``y<=0``."""
+    gd = chi2.pdf(y, nu)
+    if n == 0:
+        return gd
+    a = nu / 2 - 1
+    with np.errstate(divide="ignore", invalid="ignore"):
+        poly = np.zeros_like(gd)
+        for j in range(n + 1):
+            ff = np.ones_like(gd)
+            for ell in range(j):
+                ff = ff * (a - ell)
+            poly = poly + comb(n, j) * (-0.5) ** (n - j) * ff * (y ** (-float(j)))
+        gd = gd * poly
+    gd = np.where(y <= 0, 0.0, gd)
+    return gd
 
 
 # ===========================================================================

@@ -15,6 +15,14 @@ from scipy.linalg import sqrtm
 import mpmath as mp
 
 
+class ImhofClipWarning(UserWarning):
+    """Raised when an Imhof-method output is clipped at a probability limit.
+    Mirrors MATLAB's ``gx2:imhofClip`` warning identifier, so callers that
+    iterate through benign tiny tail-density evaluations (e.g. the vectorized
+    Newton solve in ``inv``, or the mode search in ``stat``) can silence just
+    this warning rather than all warnings."""
+
+
 def asrow(x):
     """Return ``x`` as a 1-D float array (MATLAB row vector)."""
     return np.atleast_1d(np.asarray(x, dtype=float)).ravel()
