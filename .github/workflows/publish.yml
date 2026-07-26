@@ -24,17 +24,6 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Regenerate getting-started docs from the notebook
-        # Re-runs GettingStarted.ipynb and refreshes getting-started/*.png and
-        # the README's worked-examples section from its output, so the
-        # published README always reflects a fresh run of the notebook. This
-        # is best-effort and never blocks the release -- if the notebook
-        # itself is out of date, keeping it current is on the maintainer.
-        run: |
-          python -m pip install -e ".[docs]"
-          python -m ipykernel install --user --name python3
-          python scripts/build_getting_started.py
-
       - name: Build sdist and wheel
         run: |
           python -m pip install --upgrade build
