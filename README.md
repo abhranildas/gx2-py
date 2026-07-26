@@ -4,8 +4,8 @@
 
 # gx2 — Generalized chi-square distribution
 
-`gx2` is a python package that computes the statistics, characteristic function, pdf, cdf, inverse cdf
-and random numbers of the **generalized chi-square distribution**.
+`gx2` is a python package that computes the statistics, characteristic function, pdf, cdf, inverse cdf,
+random numbers, and exact gradients/Hessians of the cdf, of the **generalized chi-square distribution**.
 This is the python port of the
 [MATLAB toolbox](https://www.mathworks.com/matlabcentral/fileexchange/85028-generalized-chi-square-distribution).
 
@@ -47,24 +47,6 @@ pip install .
 pip install -e ".[plot,test]"
 ```
 
-## Getting started
-
-```python
-import gx2
-
-w, k, l, s, m = [1, -5, 2], [1, 2, 3], [2, 3, 7], 0, 5
-
-gx2.stat(w, k, l, s, m)          # mean and variance
-gx2.cdf(25, w, k, l, s, m)       # cdf at x = 25
-gx2.pdf(25, w, k, l, s, m)       # pdf at x = 25
-gx2.inv(0.9, w, k, l, s, m)      # 90th percentile
-gx2.rnd(w, k, l, s, m, size=5)   # random numbers
-```
-
-Open [`GettingStarted.ipynb`](GettingStarted.ipynb) for an interactive tour
-with worked examples and plots. For any function, see its full documentation
-with `help(gx2.cdf)` (or `gx2.cdf?` in Jupyter).
-
 ## Public functions
 
 | function | purpose |
@@ -77,10 +59,28 @@ with `help(gx2.cdf)` (or `gx2.cdf?` in Jupyter).
 | `inv(p, w, k, l, s, m, side=, method=, ...)` | inverse cdf |
 | `gx2_to_norm_quad_params(w, k, l, s, m)` | gx2 → quadratic-form coefficients of a standard normal |
 | `norm_quad_to_gx2_params(mu, v, quad, merge=)` | quadratic form of a normal → gx2 parameters |
+| `cdf_grad_gx2(x, w, k, l, s, m, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the native parameters `w, k, l, s, m` |
+| `cdf_grad_norm_quad(x, mu, v, quad, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the quadratic boundary coefficients `q2, q1, q0` |
 
 The individual computation routines (`imhof`, `ruben`, `ifft`, `pearson`,
 `tail`, `ellipse`, `cdf_ray`, `pdf_ray`, …) and numerical helpers
 (`log_sum_exp`, `signed_log_sum_exp`, `phi_ray`, …) are also exposed.
+
+For full documentation of any function, use Python's `help` (or `?` in
+Jupyter), e.g.:
+
+```python
+help(gx2.gx2_to_norm_quad_params)
+help(gx2.norm_quad_to_gx2_params)
+help(gx2.stat)
+help(gx2.rnd)
+help(gx2.char)
+help(gx2.cdf)
+help(gx2.pdf)
+help(gx2.inv)
+help(gx2.cdf_grad_gx2)
+help(gx2.cdf_grad_norm_quad)
+```
 
 ## Computation methods for `cdf` / `pdf`
 
@@ -97,19 +97,595 @@ also force one:
 | `'pearson'` | Pearson's 3-moment approximation |
 | `'ellipse'` | ellipse approximation near a finite tail — requires all `w` the same sign and `s=0` |
 
-## Usage notes
+## Examples
 
-* `cdf` and `pdf` return just the probability/density by default. Pass
-  `full_output=True` (auto-enabled for `x='full'`) to also receive the error
-  estimate and, for `x='full'`, the grid of x-values.
-* In the far tails, probabilities can fall below double precision (~1e-308).
-  The `'tail'`, `'ellipse'` and `'ray'` methods then return the **base-10
-  logarithm** of such values (a negative number); `inv` likewise accepts a
-  negative `p` as a log10 probability. `precision='log'` (the ray default) is
-  the easiest way to reach this regime.
-* The `'ray'` method runs on the CPU with NumPy and batches automatically over
-  rays to bound memory. `precision='vpa'` uses `mpmath` and returns
-  `mpmath.mpf` objects for sub-`realmin` values.
+The following are the worked examples from the interactive [`GettingStarted.ipynb`](GettingStarted.ipynb) notebook.
+
+<!-- BEGIN GENERATED: getting-started (do not edit by hand; regenerate with `python scripts/build_getting_started.py`) -->
+
+```python
+import warnings
+import numpy as np
+import matplotlib.pyplot as plt
+import gx2
+
+# Keep this getting-started's output clean. The far-tail sections below
+# deliberately push the methods past the limits of double precision, which
+# would otherwise print expected underflow / log10-of-zero warnings.
+warnings.filterwarnings("ignore")
+np.seterr(all="ignore")
+
+np.random.seed(0)  # for reproducible random samples below
+```
+
+### Calculate mean, variance, mode
+
+```python
+# gx2 parameters
+w = [1, -10, 2]
+k = [1, 2, 3]
+l = [2, 3, 7]
+s = 5
+m = 10
+
+mu, v, mode = gx2.stat(w, k, l, s, m, mode=True)
+print("mu   =", mu)
+print("v    =", v)
+print("mode =", mode)
+```
+```
+mu   = -17.0
+v    = 1771.0
+mode = 9.297513876130134
+```
+
+### Generate random samples
+
+```python
+r = gx2.rnd(w, k, l, s, m, size=(1, int(1e5)))
+plt.figure()
+plt.hist(r.ravel(), bins=200, edgecolor='none')
+plt.axvline(mode, color='k')
+plt.text(mode, 0, 'expected mode', rotation=90, va='bottom')
+plt.show()
+```
+![Histogram of samples, with the expected mode marked](getting-started/01_sample_histogram.png)
+
+### Compute PDF, CDF and inverse CDF with default methods
+
+```python
+x = [10, 25]
+f = gx2.pdf(x, w, k, l, s, m)
+print("f =", f)
+p = gx2.cdf(x, w, k, l, s, m)
+print("p =", p)
+# find the median by using the inverse CDF function:
+x_med = gx2.inv(.5, w, k, l, s, m)
+print("x_med =", x_med)
+# Compute quantiles for cdf values of 1e-3 and 1e-2, by supplying their log10 values:
+x_q = gx2.inv([-3, -2], w, k, l, s, m)
+print("x_q =", x_q)
+# verify that cdf values here are indeed 1e-3 and 1e-2
+print("p =", gx2.cdf(x_q, w, k, l, s, m))
+# Compute quantiles for complementary cdf values of 1e-3 and 1e-2, by supplying their log10 values:
+x_q = gx2.inv([-3, -2], w, k, l, s, m, side='upper')
+print("x_q (upper) =", x_q)
+# verify that ccdf values here are indeed 1e-3 and 1e-2
+print("p (upper) =", gx2.cdf(x_q, w, k, l, s, m, side='upper'))
+```
+```
+f = [0.01205709 0.00879803]
+p = [0.71497983 0.87899866]
+x_med = -8.765662415017411
+x_q = [-218.36937302 -149.26056464]
+p = [0.001 0.01 ]
+x_q (upper) = [69.48993111 51.03378046]
+p (upper) = [0.001 0.01 ]
+```
+
+```python
+# compute the PDF over most of the span of the distribution.
+# with the 'full' argument, the span x is computed automatically.
+f, _, xf = gx2.pdf('full', w, k, l, s, m)
+
+# now compare the sampled histogram with the computed PDF
+plt.figure()
+plt.plot(xf, f)
+plt.hist(r.ravel(), bins=200, density=True, histtype='step')
+plt.axvline(x_med, color='k')  # mark the computed median
+plt.text(x_med, 0, 'median', rotation=90, va='bottom')
+plt.xlim([-250, 100])
+plt.show()
+```
+![Computed PDF overlaid on the sampled histogram](getting-started/02_pdf_vs_histogram.png)
+
+```python
+# compute CDF over most of the span of the distribution.
+# the 'full' argument uses the IFFT method, good for quick rough plots,
+# but less accurate (esp. for CDF) than some other methods
+p, _, xp = gx2.cdf('full', w, k, l, s, m)
+
+# now compare the sampled histogram with the computed CDF
+plt.figure()
+plt.plot(xp, p)
+plt.hist(r.ravel(), bins=200, density=True, cumulative=True, histtype='step')
+# mark the computed median, and verify that it sits at 0.5 on the vertical axis:
+plt.axvline(x_med, color='k')
+plt.text(x_med, 0, 'median', rotation=90, va='bottom')
+plt.axhline(0.5)
+plt.xlim([-200, 100])
+plt.show()
+```
+![Computed CDF overlaid on the sampled cumulative histogram](getting-started/03_cdf_vs_histogram.png)
+
+### Compute CDF, PDF and inverse CDF with each exact method and its settings
+
+#### A non-elliptic distribution
+
+```python
+w = [-2, -5, 2]
+k = [2, 1, 3]
+l = [0, 4, 4]
+s = 3
+m = -20
+
+# first find the quantile points at 0.1% in each tail
+x_bounds = gx2.inv([0.001, 0.999], w, k, l, s, m)
+print("x_bounds =", x_bounds)
+# now compute within this range
+x = np.linspace(x_bounds[0], x_bounds[1], 50)
+
+# compute CDF
+p_ifft = gx2.cdf(x, w, k, l, s, m, method='ifft')
+p_imhof = gx2.cdf(x, w, k, l, s, m, method='imhof')
+p_ray = gx2.cdf(x, w, k, l, s, m, method='ray', n_rays=int(1e4))
+
+# plot markers largest first, smallest last, so overlapping dots all stay visible
+plt.figure()
+plt.plot(x, p_ifft, '-k', label='IFFT')
+plt.plot(x, p_ray, 'or', markersize=9, label='ray')
+plt.plot(x, p_imhof, '.b', markersize=6, label='Imhof')
+plt.legend()
+plt.show()
+```
+![CDF from the IFFT, ray and Imhof methods, overlaid](getting-started/04_cdf_methods_nonelliptic.png)
+
+```python
+# compute PDF
+f_ifft = gx2.pdf(x, w, k, l, s, m, method='ifft')
+f_imhof = gx2.pdf(x, w, k, l, s, m, method='imhof')
+f_ray = gx2.pdf(x, w, k, l, s, m, method='ray', n_rays=int(1e6))
+
+# plot markers largest first, smallest last, so overlapping dots all stay visible
+plt.figure()
+plt.plot(x, f_ifft, '-k', label='IFFT')
+plt.plot(x, f_ray, 'or', markersize=9, label='ray')
+plt.plot(x, f_imhof, '.b', markersize=6, label='Imhof')
+plt.legend()
+plt.show()
+```
+![PDF from the IFFT, ray and Imhof methods, overlaid](getting-started/05_pdf_methods_nonelliptic.png)
+
+```python
+# Compute quantiles for tiny cdf values of 1e-1000 and 1e-2000, by supplying
+# their log10 values. Use a forward cdf method that can get down to such tiny values.
+# Here we use the infinite-tail approximation.
+x_q = gx2.inv([-1e3, -2e3], w, k, l, s, m, method='tail')
+print("x_q =", x_q)
+# now verify using an exact cdf method that cdf values here are indeed 1e-1000 and 1e-2000:
+print("p =", gx2.cdf(x_q, w, k, l, s, m, method='ray', n_rays=int(1e7)))
+# now do the same for the upper tail:
+x_q = gx2.inv([-1e3, -2e3], w, k, l, s, m, side='upper', method='tail')
+print("x_q (upper) =", x_q)
+print("p (upper) =", gx2.cdf(x_q, w, k, l, s, m, side='upper', method='ray', n_rays=int(1e7)))
+```
+```
+x_q = [-24365.14269438 -47950.03867407]
+p = [-1002.28084153 -2006.81538753]
+x_q (upper) = [ 9723.84451406 19159.3719629 ]
+p (upper) = [-1000.32783211 -2002.18480266]
+```
+
+#### An elliptic distribution
+
+Here we can use Ruben's method too.
+
+```python
+w = [3, 4, 5]
+k = [1, 2, 3]
+l = [2, 3, 7]
+s = 0
+m = -100
+
+# first find the quantile points at 0.1% in each tail
+x_bounds = gx2.inv([0.001, 0.999], w, k, l, s, m)
+print("x_bounds =", x_bounds)
+# now compute within this range
+x = np.linspace(x_bounds[0], x_bounds[1], 50)
+
+# compute CDF
+p_ifft = gx2.cdf(x, w, k, l, s, m, method='ifft')
+p_imhof = gx2.cdf(x, w, k, l, s, m, method='imhof')
+p_ray = gx2.cdf(x, w, k, l, s, m, method='ray', n_rays=int(1e4))
+p_ruben = gx2.cdf(x, w, k, l, s, m, method='ruben')
+
+# plot markers largest first, smallest last, so overlapping dots all stay visible
+plt.figure()
+plt.plot(x, p_ifft, '-k', label='IFFT')
+plt.plot(x, p_ruben, 'og', markersize=12, label='Ruben')
+plt.plot(x, p_ray, 'or', markersize=9, label='ray')
+plt.plot(x, p_imhof, '.b', markersize=6, label='Imhof')
+plt.legend()
+plt.show()
+```
+![CDF from the IFFT, Ruben, ray and Imhof methods, overlaid](getting-started/06_cdf_methods_elliptic.png)
+
+```python
+# compute PDF
+f_ifft = gx2.pdf(x, w, k, l, s, m, method='ifft')
+f_imhof = gx2.pdf(x, w, k, l, s, m, method='imhof')
+f_ray = gx2.pdf(x, w, k, l, s, m, method='ray', n_rays=int(1e6))
+f_ruben = gx2.pdf(x, w, k, l, s, m, method='ruben')
+
+# plot markers largest first, smallest last, so overlapping dots all stay visible
+plt.figure()
+plt.plot(x, f_ifft, '-k', label='IFFT')
+plt.plot(x, f_ruben, 'og', markersize=12, label='Ruben')
+plt.plot(x, f_ray, 'or', markersize=9, label='ray')
+plt.plot(x, f_imhof, '.b', markersize=6, label='Imhof')
+plt.legend()
+plt.show()
+```
+![PDF from the IFFT, Ruben, ray and Imhof methods, overlaid](getting-started/07_pdf_methods_elliptic.png)
+
+```python
+# Compute quantiles for tiny cdf values of 1e-1000 and 1e-2000, by supplying
+# their log10 values. Use a forward cdf method that can get down to such tiny values.
+# Here we use the ellipse approximation, with x_scale='log', which allows to specify
+# log10 values of x measured from the finite tail m.
+x_q = gx2.inv([-1e3, -2e3], w, k, l, s, m, method='ellipse', x_scale='log')
+print("x_q =", x_q)
+# this means that the computed quantiles are 1e-331 and 1e-664 above m
+
+# now verify using the forward cdf method that cdf values here are indeed 1e-1000 and 1e-2000:
+print("p =", gx2.cdf(x_q, w, k, l, s, m, method='ellipse', x_scale='log'))
+```
+```
+x_q = [-331.27463875 -664.60797208]
+p = [-1000. -2000.]
+```
+
+### Compute CDF and PDF in the far tails, using some tail approximation methods too
+
+Ray, tail and Imhof methods are best for infinite tails.
+
+#### Compute CDF in an infinite lower tail
+
+```python
+w = [1, 2, -3, -4]
+k = [6, 5, 4, 3]
+l = [5, 10, 0, 0]
+s = 10
+m = -50
+
+x = np.linspace(-500, 200, 40)
+
+p_ifft = gx2.cdf(x, w, k, l, s, m, method='ifft', span=1e7, n_grid=int(1e7))
+p_imhof = gx2.cdf(x, w, k, l, s, m, method='imhof', AbsTol=0, RelTol=1e-10)
+p_ray = gx2.cdf(x, w, k, l, s, m, method='ray', n_rays=int(1e6))
+p_pearson = gx2.cdf(x, w, k, l, s, m, method='pearson')  # pearson sucks
+
+# tail approximation for lower tail. Mentioning 'lower' is needed here.
+# For output values that are too small for double precision, it returns
+# their log10 values, which are negative.
+p_tail = gx2.cdf(x, w, k, l, s, m, side='lower', method='tail')
+p_tail = np.asarray(p_tail, dtype=float)
+# convert all output values to their log10
+p_tail[p_tail > 0] = np.log10(p_tail[p_tail > 0])
+
+# plot markers largest first, smallest last, so overlapping dots all stay visible
+plt.figure()
+plt.plot(x, np.log10(p_ifft), '-k', label='IFFT')
+plt.plot(x, p_tail, '-g', label='tail')
+plt.plot(x, np.log10(p_pearson), '.c', markersize=12, label='pearson')
+plt.plot(x, np.log10(p_ray), 'or', markersize=9, label='ray')
+plt.plot(x, np.log10(p_imhof), '.b', markersize=6, label='Imhof')
+plt.axis([-5e2, 200, -30, 0])
+plt.legend()
+plt.ylabel(r'$\log_{10} p$')
+plt.show()
+```
+![log10(CDF) in the lower tail, from the IFFT, tail, Pearson, ray and Imhof methods](getting-started/08_cdf_infinite_lower_tail.png)
+
+#### Compute PDF in an infinite upper tail
+
+```python
+x = np.linspace(0, 500, 40)
+
+f_ifft = gx2.pdf(x, w, k, l, s, m, method='ifft', span=1e7, n_grid=int(1e7))
+f_imhof = gx2.pdf(x, w, k, l, s, m, method='imhof', AbsTol=0, RelTol=1e-1)
+f_ray = gx2.pdf(x, w, k, l, s, m, method='ray', n_rays=int(1e6))
+f_pearson = gx2.pdf(x, w, k, l, s, m, method='pearson')
+
+# tail approximation for upper tail. Mentioning 'upper' is needed here.
+f_tail = gx2.pdf(x, w, k, l, s, m, side='upper', method='tail')
+
+# plot markers largest first, smallest last, so overlapping dots all stay visible
+plt.figure()
+plt.plot(x, np.log10(f_ifft), '-k', label='IFFT')
+plt.plot(x, np.log10(np.asarray(f_tail, float)), '-g', label='tail')
+plt.plot(x, np.log10(f_pearson), '.c', markersize=12, label='pearson')
+plt.plot(x, np.log10(f_ray), 'or', markersize=9, label='ray')
+plt.plot(x, np.log10(f_imhof), '.b', markersize=6, label='Imhof')
+plt.axis([0, 500, -30, 0])
+plt.legend()
+plt.ylabel(r'$\log_{10} f$')
+plt.show()
+```
+![log10(PDF) in the upper tail, from the IFFT, tail, Pearson, ray and Imhof methods](getting-started/09_pdf_infinite_upper_tail.png)
+
+#### Compute CDF in a finite lower tail
+
+Ruben and ellipse methods are best for finite tails.
+
+```python
+w = [1, 2, 3, 4]
+k = [6, 5, 4, 3]
+l = [5, 10, 0, 0]
+s = 0
+m = 0
+
+x = np.logspace(-2, 2, 40)
+
+p_ifft = gx2.cdf(x, w, k, l, s, m, method='ifft', span=1e7, n_grid=int(1e7))
+p_imhof = gx2.cdf(x, w, k, l, s, m, method='imhof', AbsTol=0, RelTol=1e-10)
+p_ruben = gx2.cdf(x, w, k, l, s, m, method='ruben')
+p_ray = gx2.cdf(x, w, k, l, s, m, method='ray', n_rays=int(1e5))
+p_pearson = gx2.cdf(x, w, k, l, s, m, method='pearson')
+p_ellipse = gx2.cdf(x, w, k, l, s, m, method='ellipse')
+
+# plot markers largest first, smallest last, so overlapping dots all stay visible
+plt.figure()
+plt.plot(x, np.log10(p_ifft), '-k', label='IFFT')
+plt.plot(x, np.log10(np.asarray(p_ellipse, float)), '-g', label='ellipse')
+plt.plot(x, np.log10(p_pearson), '.c', markersize=12, label='pearson')
+plt.plot(x, np.log10(p_ray), 'or', markersize=9, label='ray')
+plt.plot(x, np.log10(p_imhof), '.b', markersize=6, label='Imhof')
+plt.plot(x, np.log10(p_ruben), 'om', markersize=4, label='Ruben')
+plt.xscale('log')
+plt.legend(loc='lower right')
+plt.ylabel(r'$\log_{10} p$')
+plt.show()
+```
+![log10(CDF) in a finite lower tail, from the IFFT, ellipse, Pearson, ray, Imhof and Ruben methods](getting-started/10_cdf_finite_lower_tail.png)
+
+### Distribution of quadratic form of a normal variable
+
+Normal parameters:
+
+```python
+mu = np.array([5, 6])      # mean
+v = np.array([[2, 1], [1, 3]])  # covariance matrix
+```
+
+Sample normal random vectors:
+
+```python
+x = np.random.multivariate_normal(mu, v, int(1e5)).T
+plt.figure()
+plt.plot(x[0, :], x[1, :], '.')
+plt.show()
+```
+![Scatter of the sampled normal vectors](getting-started/11_normal_scatter.png)
+
+Quadratic form $q(\mathbf{x})=(x_1+x_2)^2-x_1-1 =
+[x_1;x_2]'\,[1\ 1; 1\ 1]\,[x_1;x_2] + [-1;0]'\,[x_1;x_2] - 1$
+
+```python
+quad = {'q2': np.array([[1, 1], [1, 1]]),
+        'q1': np.array([-1, 0]),
+        'q0': -1}
+```
+
+Compute the quadratic form q for the sample of normal vectors:
+
+```python
+q = np.sum(x * (quad['q2'] @ x), axis=0) + quad['q1'] @ x + quad['q0']
+```
+
+Get generalized chi-square parameters corresponding to this quadratic form:
+
+```python
+w, k, l, s, m = gx2.norm_quad_to_gx2_params(mu, v, quad)
+print("w      =", w)
+print("k      =", k)
+print("l=", l)
+print("s      =", s)
+print("m      =", m)
+```
+```
+w      = [7.]
+k      = [1.]
+l= [16.61880466]
+s      = 0.8451542547285165
+m      = -1.3316326530612201
+```
+
+Compare the sampled and calculated distributions of q:
+
+```python
+f, _, xf = gx2.pdf('full', w, k, l, s, m)
+plt.figure()
+plt.plot(xf, f)
+plt.hist(q, bins=200, density=True, histtype='step')
+plt.xlim([0, 400])
+plt.show()
+```
+![Computed PDF of q overlaid on its sampled histogram](getting-started/12_quadform_pdf_vs_histogram.png)
+
+Compare the sampled and calculated means and variances:
+
+```python
+mu_q, v_q = gx2.stat(w, k, l, s, m)
+print([mu_q, q.mean()])
+print([v_q, q.var()])
+```
+```
+[122.0, np.float64(121.92202088814828)]
+[3355.999999999998, np.float64(3324.8071301989507)]
+```
+
+Compare the sampled and calculated probabilities $p(q(\mathbf{x})<50)$:
+
+```python
+print((q < 50).mean())
+print(float(gx2.cdf(50, w, k, l, s, m)))
+```
+```
+0.08404
+0.08559335530030304
+```
+
+Find a canonical quadratic form of a standard multinormal corresponding to these generalized chi-square parameters:
+
+```python
+quad = gx2.gx2_to_norm_quad_params(w, k, l, s, m)
+print("q2 =\n", quad['q2'])
+print("q1 =", quad['q1'])
+print("q0 =", quad['q0'])
+```
+```
+q2 =
+ [[7. 0.]
+ [0. 0.]]
+q1 = [-57.07263542   0.84515425]
+q0 = 115.0
+```
+
+### Compute characteristic function
+
+```python
+t = np.linspace(-1, 1, int(1e3))
+phi = gx2.char(t, w, k, l, s, m)
+plt.figure()
+plt.plot(phi.real, phi.imag, '-o')
+plt.xlabel('real'); plt.ylabel('imag')
+plt.show()
+```
+![Characteristic function traced in the complex plane](getting-started/13_characteristic_function.png)
+
+### 1st & 2nd derivatives (gradient & Hessian) of CDF wrt distribution parameters
+
+This uses first and second derivatives computed analytically (faster and more accurate), than finite-differencing the cdf, which is slower and noisier.
+
+#### Gradient and Hessian wrt the 'native' parameters
+
+Take a generalized chi-square and a point $x_0$, and ask how the cdf $F(x_0)$ changes as we nudge the distribution parameters.
+
+```python
+w = [1, -5, 2]
+k = [1, 2, 3]
+l = [2, 3, 7]
+s = 2
+m = 5
+x0 = 10
+
+# The gradient is a flat vector over all parameters, in the canonical order
+# [w, k, l, s, m] (all of w, then all of k, ...); the Hessian is the
+# matching square matrix.
+grad, hess = gx2.cdf_grad_gx2(x0, w, k, l, s, m, hess=True)
+print("grad =", grad.ravel())
+print("hess shape =", hess.shape)
+```
+```
+grad = [-5.93248766e-02 -6.46817998e-02 -1.83416585e-01 -2.03994081e-02
+  9.33654797e-02 -4.02313224e-02 -2.01733664e-02  8.03252777e-02
+ -3.89155815e-02  4.26856717e-05 -2.05327351e-02]
+hess shape = (11, 11)
+```
+
+#### Taylor picture: vary one native parameter and predict the cdf
+
+We compute derivatives only wrt $\lambda$, then use the first and second derivative of $\lambda_1$ to build the second-order Taylor model of $F(x_0)$ as $\lambda_1$ moves.
+
+$F(x_0)$, $\frac{\partial F(x_0)}{\partial \lambda_1}$ and $\frac{\partial^2 F(x_0)}{\partial \lambda_1^2}$:
+
+```python
+F0 = float(gx2.cdf(x0, w, k, l, s, m))
+g, H = gx2.cdf_grad_gx2(x0, w, k, l, s, m, wrt=['l'], hess=True)
+gl = g[0, 0]; Hl = H[0, 0]
+
+delta = np.linspace(-50, 50, 100)
+Ftrue = np.array([gx2.cdf(x0, w, k, np.array(l) + [d, 0, 0], s, m) for d in delta]).ravel()
+Ftaylor = F0 + gl * delta + 0.5 * Hl * delta ** 2
+
+plt.figure()
+plt.plot(l[0] + delta, Ftrue, 'k-', label='true cdf')
+plt.plot(l[0] + delta, Ftaylor, '-b', label='2nd-order Taylor')
+plt.plot(l[0], F0, 'bo', markerfacecolor='b')
+plt.xlabel(r'$\lambda_1$'); plt.ylabel('$F(x_0)$')
+plt.axis([-50, 50, 0, 1])
+plt.legend()
+plt.title(r'cdf sensitivity to a non-centrality $\lambda_1$')
+plt.show()
+```
+![True cdf vs. its 2nd-order Taylor approximation, as lambda_1 is varied](getting-started/14_taylor_native.png)
+
+#### Gradient and Hessian wrt the parameters of the quadratic boundary
+
+```python
+mu = np.array([1, 2])
+v = np.array([[2, 1], [1, 3]])
+quad = {'q2': np.array([[1, 1], [1, 1]]), 'q1': np.array([-1, 0]), 'q0': -1}
+x0 = 0
+
+grad, hess = gx2.cdf_grad_norm_quad(x0, mu, v, quad, hess=True)
+print("dF/dQ2:\n", grad['q2'])
+print("dF/dq1:", grad['q1'])
+print(f"dF/dq0: {grad['q0']:.4f}")
+```
+```
+dF/dQ2:
+ [[-0.06275115  0.02888145]
+ [ 0.02888145 -0.07839456]]
+dF/dq1: [ 0.01277197 -0.05881688]
+dF/dq0: -0.0962
+```
+
+#### Taylor picture: vary one boundary parameter and predict the cdf
+
+We compute the second-order Taylor approximation of $F(x_0)$ wrt variations in $\mathbf{Q}_{11}$.
+
+$F(x_0)$, $\frac{\partial F(x_0)}{\partial \mathbf{Q}_{11}}$ and $\frac{\partial^2 F(x_0)}{\partial \mathbf{Q}_{11}^2}$:
+
+```python
+w2, k2, l2, s2, m2 = gx2.norm_quad_to_gx2_params(mu, v, quad)
+F0 = float(gx2.cdf(x0, w2, k2, l2, s2, m2))
+g11 = grad['q2'][0, 0]; H11 = hess['q2q2'][0, 0, 0, 0]
+
+# helper: probability with the Q2(1,1) coefficient perturbed by d
+def probq(mu, v, quad, d, x0):
+    q = {'q2': quad['q2'].astype(float).copy(), 'q1': quad['q1'], 'q0': quad['q0']}
+    q['q2'][0, 0] += d
+    w, k, l, s, m = gx2.norm_quad_to_gx2_params(mu, v, q)
+    return float(gx2.cdf(x0, w, k, l, s, m))
+
+delta = np.linspace(-2, 2, 100)
+Ftrue = np.array([probq(mu, v, quad, d, x0) for d in delta])
+Ftaylor = F0 + g11 * delta + 0.5 * H11 * delta ** 2
+
+plt.figure()
+plt.plot(quad['q2'][0, 0] + delta, Ftrue, 'k-', label='true cdf')
+plt.plot(quad['q2'][0, 0] + delta, Ftaylor, '-b', label='2nd-order Taylor')
+plt.plot(quad['q2'][0, 0], F0, 'bo', markerfacecolor='b')
+plt.xlabel('$Q_2(1,1)$'); plt.ylabel('$F(x_0)$')
+plt.legend()
+plt.title('cdf sensitivity to boundary coeff. $Q_2(1,1)$')
+plt.show()
+```
+![True cdf vs. its 2nd-order Taylor approximation, as Q_2(1,1) is varied](getting-started/15_taylor_boundary.png)
+
+<!-- END GENERATED: getting-started -->
 
 ## License
 

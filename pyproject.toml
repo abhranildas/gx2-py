@@ -41,7 +41,7 @@ dependencies = [
 [project.optional-dependencies]
 plot = ["matplotlib>=3.4"]
 test = ["pytest>=7.0"]
-docs = ["jupyter", "matplotlib>=3.4"]
+docs = ["jupyter", "matplotlib>=3.4", "nbformat>=5.9", "nbclient>=0.9", "ipykernel>=6.0"]
 
 [project.urls]
 "GitHub source" = "https://github.com/abhranildas/gx2-py"
