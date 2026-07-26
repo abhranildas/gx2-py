@@ -39,6 +39,13 @@ NOTEBOOK_PATH = REPO / "GettingStarted.ipynb"
 IMAGES_DIR = REPO / "getting-started"
 README_PATH = REPO / "README.md"
 
+# Images are embedded via absolute raw.githubusercontent.com URLs (matching
+# the logo at the top of the README) rather than repo-relative paths, since
+# PyPI renders the README's long_description with no base URL to resolve
+# relative links against -- a relative path renders fine on GitHub but 404s
+# on the PyPI project page.
+RAW_BASE = "https://raw.githubusercontent.com/abhranildas/gx2-py/main"
+
 # Executed in a temporary cell prepended to the notebook (then discarded
 # before saving) so plots are captured as image/png outputs regardless of
 # the kernel's default matplotlib backend.
@@ -175,7 +182,7 @@ def build_examples_markdown(nb) -> tuple[str, set[str]]:
                     used_files.add(filename)
                     png_bytes = base64.b64decode(out["data"]["image/png"])
                     (IMAGES_DIR / filename).write_bytes(png_bytes)
-                    lines.append(f"![{alt}](getting-started/{filename})")
+                    lines.append(f"![{alt}]({RAW_BASE}/getting-started/{filename})")
             else:
                 text = text_output(cell)
                 if text:

@@ -149,7 +149,7 @@ plt.axvline(mode, color='k')
 plt.text(mode, 0, 'expected mode', rotation=90, va='bottom')
 plt.show()
 ```
-![Histogram of samples, with the expected mode marked](getting-started/01_sample_histogram.png)
+![Histogram of samples, with the expected mode marked](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/01_sample_histogram.png)
 
 ### Compute PDF, CDF and inverse CDF with default methods
 
@@ -197,7 +197,7 @@ plt.text(x_med, 0, 'median', rotation=90, va='bottom')
 plt.xlim([-250, 100])
 plt.show()
 ```
-![Computed PDF overlaid on the sampled histogram](getting-started/02_pdf_vs_histogram.png)
+![Computed PDF overlaid on the sampled histogram](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/02_pdf_vs_histogram.png)
 
 ```python
 # compute CDF over most of the span of the distribution.
@@ -216,7 +216,7 @@ plt.axhline(0.5)
 plt.xlim([-200, 100])
 plt.show()
 ```
-![Computed CDF overlaid on the sampled cumulative histogram](getting-started/03_cdf_vs_histogram.png)
+![Computed CDF overlaid on the sampled cumulative histogram](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/03_cdf_vs_histogram.png)
 
 ### Compute CDF, PDF and inverse CDF with each exact method and its settings
 
@@ -248,7 +248,7 @@ plt.plot(x, p_imhof, '.b', markersize=6, label='Imhof')
 plt.legend()
 plt.show()
 ```
-![CDF from the IFFT, ray and Imhof methods, overlaid](getting-started/04_cdf_methods_nonelliptic.png)
+![CDF from the IFFT, ray and Imhof methods, overlaid](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/04_cdf_methods_nonelliptic.png)
 
 ```python
 # compute PDF
@@ -264,7 +264,7 @@ plt.plot(x, f_imhof, '.b', markersize=6, label='Imhof')
 plt.legend()
 plt.show()
 ```
-![PDF from the IFFT, ray and Imhof methods, overlaid](getting-started/05_pdf_methods_nonelliptic.png)
+![PDF from the IFFT, ray and Imhof methods, overlaid](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/05_pdf_methods_nonelliptic.png)
 
 ```python
 # Compute quantiles for tiny cdf values of 1e-1000 and 1e-2000, by supplying
@@ -318,7 +318,7 @@ plt.plot(x, p_imhof, '.b', markersize=6, label='Imhof')
 plt.legend()
 plt.show()
 ```
-![CDF from the IFFT, Ruben, ray and Imhof methods, overlaid](getting-started/06_cdf_methods_elliptic.png)
+![CDF from the IFFT, Ruben, ray and Imhof methods, overlaid](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/06_cdf_methods_elliptic.png)
 
 ```python
 # compute PDF
@@ -336,7 +336,7 @@ plt.plot(x, f_imhof, '.b', markersize=6, label='Imhof')
 plt.legend()
 plt.show()
 ```
-![PDF from the IFFT, Ruben, ray and Imhof methods, overlaid](getting-started/07_pdf_methods_elliptic.png)
+![PDF from the IFFT, Ruben, ray and Imhof methods, overlaid](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/07_pdf_methods_elliptic.png)
 
 ```python
 # Compute quantiles for tiny cdf values of 1e-1000 and 1e-2000, by supplying
@@ -395,7 +395,7 @@ plt.legend()
 plt.ylabel(r'$\log_{10} p$')
 plt.show()
 ```
-![log10(CDF) in the lower tail, from the IFFT, tail, Pearson, ray and Imhof methods](getting-started/08_cdf_infinite_lower_tail.png)
+![log10(CDF) in the lower tail, from the IFFT, tail, Pearson, ray and Imhof methods](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/08_cdf_infinite_lower_tail.png)
 
 #### Compute PDF in an infinite upper tail
 
@@ -422,7 +422,7 @@ plt.legend()
 plt.ylabel(r'$\log_{10} f$')
 plt.show()
 ```
-![log10(PDF) in the upper tail, from the IFFT, tail, Pearson, ray and Imhof methods](getting-started/09_pdf_infinite_upper_tail.png)
+![log10(PDF) in the upper tail, from the IFFT, tail, Pearson, ray and Imhof methods](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/09_pdf_infinite_upper_tail.png)
 
 #### Compute CDF in a finite lower tail
 
@@ -457,7 +457,7 @@ plt.legend(loc='lower right')
 plt.ylabel(r'$\log_{10} p$')
 plt.show()
 ```
-![log10(CDF) in a finite lower tail, from the IFFT, ellipse, Pearson, ray, Imhof and Ruben methods](getting-started/10_cdf_finite_lower_tail.png)
+![log10(CDF) in a finite lower tail, from the IFFT, ellipse, Pearson, ray, Imhof and Ruben methods](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/10_cdf_finite_lower_tail.png)
 
 ### Distribution of quadratic form of a normal variable
 
@@ -476,7 +476,7 @@ plt.figure()
 plt.plot(x[0, :], x[1, :], '.')
 plt.show()
 ```
-![Scatter of the sampled normal vectors](getting-started/11_normal_scatter.png)
+![Scatter of the sampled normal vectors](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/11_normal_scatter.png)
 
 Quadratic form $q(\mathbf{x})=(x_1+x_2)^2-x_1-1 =
 [x_1;x_2]'\,[1\ 1; 1\ 1]\,[x_1;x_2] + [-1;0]'\,[x_1;x_2] - 1$
@@ -521,7 +521,7 @@ plt.hist(q, bins=200, density=True, histtype='step')
 plt.xlim([0, 400])
 plt.show()
 ```
-![Computed PDF of q overlaid on its sampled histogram](getting-started/12_quadform_pdf_vs_histogram.png)
+![Computed PDF of q overlaid on its sampled histogram](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/12_quadform_pdf_vs_histogram.png)
 
 Compare the sampled and calculated means and variances:
 
@@ -572,7 +572,7 @@ plt.plot(phi.real, phi.imag, '-o')
 plt.xlabel('real'); plt.ylabel('imag')
 plt.show()
 ```
-![Characteristic function traced in the complex plane](getting-started/13_characteristic_function.png)
+![Characteristic function traced in the complex plane](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/13_characteristic_function.png)
 
 ### 1st & 2nd derivatives (gradient & Hessian) of CDF wrt distribution parameters
 
@@ -629,7 +629,7 @@ plt.legend()
 plt.title(r'cdf sensitivity to a non-centrality $\lambda_1$')
 plt.show()
 ```
-![True cdf vs. its 2nd-order Taylor approximation, as lambda_1 is varied](getting-started/14_taylor_native.png)
+![True cdf vs. its 2nd-order Taylor approximation, as lambda_1 is varied](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/14_taylor_native.png)
 
 #### Gradient and Hessian wrt the parameters of the quadratic boundary
 
@@ -683,7 +683,7 @@ plt.legend()
 plt.title('cdf sensitivity to boundary coeff. $Q_2(1,1)$')
 plt.show()
 ```
-![True cdf vs. its 2nd-order Taylor approximation, as Q_2(1,1) is varied](getting-started/15_taylor_boundary.png)
+![True cdf vs. its 2nd-order Taylor approximation, as Q_2(1,1) is varied](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/15_taylor_boundary.png)
 
 <!-- END GENERATED: getting-started -->
 
