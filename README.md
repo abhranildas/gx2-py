@@ -17,7 +17,7 @@ of a normal random vector. It is parametrized by:
 |-----------|---------|
 | `w`       | weights of the non-central chi-square terms |
 | `k`       | their degrees of freedom |
-| `l` | their non-centralities (named `l` because `lambda` is a Python keyword) |
+| `l` | their non-centralities |
 | `s`       | scale (standard deviation) of the added normal term |
 | `m`       | constant offset |
 
