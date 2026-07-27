@@ -2,7 +2,7 @@
   <img src="https://raw.githubusercontent.com/abhranildas/gx2-py/main/gx2_icon.png" alt="gx2" width="260">
 </p>
 
-# gx2 — Generalized chi-square distribution
+# gx2 — Generalized chi-square distribution [![PyPI version](https://img.shields.io/pypi/v/gx2)](https://pypi.org/project/gx2/)
 
 `gx2` is a python package that computes the statistics, characteristic function, pdf, cdf, inverse cdf,
 random numbers, and exact gradients/Hessians of the cdf, of the **generalized chi-square distribution**.
@@ -61,10 +61,6 @@ pip install -e ".[plot,test]"
 | `norm_quad_to_gx2_params(mu, v, quad, merge=)` | quadratic form of a normal → gx2 parameters |
 | `cdf_grad_gx2(x, w, k, l, s, m, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the native parameters `w, k, l, s, m` |
 | `cdf_grad_norm_quad(x, mu, v, quad, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the quadratic boundary coefficients `q2, q1, q0` |
-
-The individual computation routines (`imhof`, `ruben`, `ifft`, `pearson`,
-`tail`, `ellipse`, `cdf_ray`, `pdf_ray`, …) and numerical helpers
-(`log_sum_exp`, `signed_log_sum_exp`, `phi_ray`, …) are also exposed.
 
 For full documentation of any function, use Python's `help` (or `?` in
 Jupyter), e.g.:
@@ -686,7 +682,3 @@ plt.show()
 ![True cdf vs. its 2nd-order Taylor approximation, as Q_2(1,1) is varied](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/15_taylor_boundary.png)
 
 <!-- END GENERATED: getting-started -->
-
-## License
-
-MIT — see [LICENSE](LICENSE).
