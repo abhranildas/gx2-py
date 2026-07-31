@@ -204,17 +204,36 @@ def _ruben_coeffs(w, k, l, n_ruben=1000):
     a = np.full(n_ruben, np.nan)
     a[0] = np.sqrt(np.exp(-np.sum(l)) * beta ** M * np.prod(w ** (-k)))
     if a[0] < REALMIN:
-        raise FloatingPointError("Underflow: some series coefficients are "
-                                 "smaller than machine precision.")
-    cum = a[0]
-    N = n_ruben
-    for j in range(1, n_ruben):
-        a[j] = np.dot(np.flip(g[:j]), a[:j]) / (2 * j)
-        cum += a[j]
-        if 1 - cum < masstol:
-            N = j + 1
-            break
-    a = a[:N]
+        # The true leading coefficient underflows (e.g. when some
+        # non-centrality in l is large, as happens for a quadratic form
+        # whose curvature is small relative to its linear part). The a_j
+        # are nonnegative and sum to 1, but that overall scale is lost here
+        # -- only their relative sizes survive, since the recursion below is
+        # linear and homogeneous in a[:j]. Recover the coefficients up to
+        # that lost scale (starting from b[0]=1 instead of the
+        # unrepresentable true a[0]), then renormalize at the end so they
+        # sum to 1, exactly as they must.
+        b = np.full(n_ruben, np.nan)
+        b[0] = 1.0
+        cum = b[0]
+        N = n_ruben
+        for j in range(1, n_ruben):
+            b[j] = np.dot(np.flip(g[:j]), b[:j]) / (2 * j)
+            cum += b[j]
+            if b[j] < masstol * cum:
+                N = j + 1
+                break
+        a = b[:N] / cum
+    else:
+        cum = a[0]
+        N = n_ruben
+        for j in range(1, n_ruben):
+            a[j] = np.dot(np.flip(g[:j]), a[:j]) / (2 * j)
+            cum += a[j]
+            if 1 - cum < masstol:
+                N = j + 1
+                break
+        a = a[:N]
 
     return dict(a=a, N=N, beta=beta, M=M, w_pos=w_pos)
 

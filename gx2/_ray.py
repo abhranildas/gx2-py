@@ -64,7 +64,20 @@ def ray_integrand(x, n_z, quad, side="upper", output="prob", precision="log"):
 
     delta2 = (q1 ** 2)[None, :] - 4 * q2[None, :] * q0mx     # (n_levels, n_rays)
     root_exists = delta2 > 0
-    quad_root_exists = root_exists & (q2[None, :] != 0)
+
+    # Treat curvature q2 as zero wherever it contributes negligibly to the
+    # discriminant relative to q1^2, not just where q2==0 exactly. This is
+    # precisely the regime where (-q1 +/- delta)/(2*q2) suffers catastrophic
+    # cancellation in the numerator before dividing by a near-zero q2,
+    # producing near-infinite/NaN roots. These rays are routed through the
+    # same stable linear-root formula already used for exactly-vanishing q2
+    # (ported from gx2_ray_integrand.m; see gx2-matlab TODO.md item 1, fix
+    # option 1).
+    with np.errstate(invalid="ignore"):
+        q2_negligible = np.abs(4 * q2[None, :] * q0mx) < np.sqrt(np.finfo(float).eps) * (q1 ** 2)[None, :]
+    q2_zero = (q2[None, :] == 0) | q2_negligible   # (n_levels, n_rays), effectively-zero curvature
+
+    quad_root_exists = root_exists & ~q2_zero
     delta = np.full_like(delta2, np.nan)
     delta[quad_root_exists] = np.sqrt(delta2[quad_root_exists])
 
@@ -74,17 +87,18 @@ def ray_integrand(x, n_z, quad, side="upper", output="prob", precision="log"):
         z1 = (-q1[None, :] + delta) / (2 * absq2)
     z = np.stack([z0, z1], axis=2)          # (n_levels, n_rays, 2)
 
-    lin = q2 == 0
-    if np.any(lin):
+    if np.any(q2_zero):
         with np.errstate(divide="ignore", invalid="ignore"):
-            z[:, lin, 0] = (-q0mx) / q1[None, lin]
-        z[:, lin, 1] = np.nan
+            z_lin = (-q0mx) / q1[None, :]   # linear roots, across levels x rays
+        z[:, :, 0] = np.where(q2_zero, z_lin, z[:, :, 0])
+        z[:, :, 1] = np.where(q2_zero, np.nan, z[:, :, 1])
 
     sym_idx = None
     p_tiny_sum = None
 
     if output == "prob":
-        init_sign_rays = np.sign(4 * np.sign(q2)[None, :] - 2 * np.sign(q1)[None, :] + np.sign(q0mx))
+        q2_sign = np.sign(q2)[None, :] * (~q2_zero)  # zero out curvature sign for effectively-linear rays, consistent with the root override above
+        init_sign_rays = np.sign(4 * q2_sign - 2 * np.sign(q1)[None, :] + np.sign(q0mx))
         Pbig, Psmall = Phibar_ray_split(z, dim)
         p_rays_big = init_sign_rays + 1 + init_sign_rays * (Pbig[:, :, 1] - Pbig[:, :, 0])
         p_rays_small = init_sign_rays * (Psmall[:, :, 1] - Psmall[:, :, 0])

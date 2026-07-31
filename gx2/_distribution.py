@@ -122,10 +122,17 @@ def cdf(x, w, k, l, s, m, side="lower", method="auto",
         elif np.sum(np.abs(w)) == 0 and s:
             p = norm.sf(x, m, s) if side == "upper" else norm.cdf(x, m, s)
         elif not s:
-            if (np.all(w > 0) and side == "lower") or (np.all(w < 0) and side == "upper"):
+            if np.all(w > 0) or np.all(w < 0):
+                # no s and w same sign: ruben() handles either side directly
+                # (it evaluates the chi2 sf term-by-term for the non-native
+                # side, rather than subtracting from 1), so there's no need
+                # to restrict this route to the side matching w's sign.
                 try:
                     p, p_err = ruben(x, w, k, l, m, side=side,
                                      **_filter(ruben, kwargs))
+                    if not np.all(np.isfinite(np.atleast_1d(p))):
+                        raise FloatingPointError(
+                            "ruben returned a non-finite value")
                 except Exception:
                     p, p_err = imhof(x, w, k, l, 0, m, side=side,
                                      **_filter(imhof, kwargs))

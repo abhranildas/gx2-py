@@ -30,7 +30,7 @@ from ._distribution import cdf, pdf, inv, log_cdf
 from ._methods import (imhof, imhof_integrand, ruben, ifft,
                        pearson, tail, ellipse)
 from ._dens_deriv import dens_deriv
-from ._gradients import cdf_grad_gx2, cdf_grad_norm_quad
+from ._gradients import cdf_grad_gx2, cdf_grad_norm_quad, norm_err_grad_bd
 from ._ray import (cdf_ray, pdf_ray, ray_integrand, int_norm_ray,
                    norm_prob_across_rays, norm_prob_across_angles)
 from ._helpers import (log_sum_exp, signed_log_sum_exp, phi_ray,
@@ -52,7 +52,7 @@ __all__ = [
     "imhof", "imhof_integrand", "ruben", "ifft", "pearson",
     "tail", "ellipse",
     # exact (non-finite-differenced) derivatives
-    "dens_deriv", "cdf_grad_gx2", "cdf_grad_norm_quad",
+    "dens_deriv", "cdf_grad_gx2", "cdf_grad_norm_quad", "norm_err_grad_bd",
     # ray method internals
     "cdf_ray", "pdf_ray", "ray_integrand", "int_norm_ray",
     "norm_prob_across_rays", "norm_prob_across_angles",

@@ -66,44 +66,61 @@ def dens_deriv(x, w, k, l, s, m, nx, AbsTol=1e-10, RelTol=1e-6,
     if np.all(pos) or np.all(neg):
         # same-sign (elliptical): differentiate Ruben's series directly
         fd, _ = ruben(x, w, k, l, m, output="pdf", nx=nx, n_ruben=n_ruben)
-        return np.asarray(fd)
+        fd = np.asarray(fd, dtype=float).reshape(x.shape)
+    else:
+        # mixed sign: q = q_+ - q_-, where q_+ = (positive-weight part) + m has
+        # support [m,inf) and q_- = (negated negative-weight part) has support
+        # [0,inf). The density is their cross-correlation, whose x-derivatives
+        # may be carried on either part. A low-dof density has a non-integrable
+        # edge singularity once differentiated, so we carry the derivatives on
+        # whichever part is sampled in its smooth interior, away from its own
+        # edge (the differentiated factor then never meets that singularity).
+        # For a threshold x below the q_+ floor m we differentiate q_-,
+        # otherwise q_+:
+        #   x <  m:  f^(nx)(x) = (-1)^nx int f_{q+}(x+v) f_{q-}^(nx)(v) dv
+        #   x >= m:  f^(nx)(x) =          int f_{q+}^(nx)(x+v) f_{q-}(v) dv
+        # At x=m exactly, both floors align into a genuine cusp; it is
+        # measure-zero and not hit in practice.
+        wp, kp, lp = w[pos], k[pos], l[pos]
+        wn, kn, ln = -w[neg], k[neg], l[neg]   # negate -> positive weights
 
-    # mixed sign: q = q_+ - q_-, where q_+ = (positive-weight part) + m has
-    # support [m,inf) and q_- = (negated negative-weight part) has support
-    # [0,inf). The density is their cross-correlation, whose x-derivatives
-    # may be carried on either part. A low-dof density has a non-integrable
-    # edge singularity once differentiated, so we carry the derivatives on
-    # whichever part is sampled in its smooth interior, away from its own
-    # edge (the differentiated factor then never meets that singularity).
-    # For a threshold x below the q_+ floor m we differentiate q_-,
-    # otherwise q_+:
-    #   x <  m:  f^(nx)(x) = (-1)^nx int f_{q+}(x+v) f_{q-}^(nx)(v) dv
-    #   x >= m:  f^(nx)(x) =          int f_{q+}^(nx)(x+v) f_{q-}(v) dv
-    # At x=m exactly, both floors align into a genuine cusp; it is
-    # measure-zero and not hit in practice.
-    wp, kp, lp = w[pos], k[pos], l[pos]
-    wn, kn, ln = -w[neg], k[neg], l[neg]   # negate -> positive weights
+        # Ruben's series coefficients depend only on (w, k, l), not on the
+        # evaluation point -- compute them once per dens_deriv call and reuse
+        # across every scalar quadrature callback below, rather than
+        # rebuilding the series from scratch on each of the (potentially
+        # hundreds of) points the inner quad() sweeps per integral.
+        coeffs_p = _ruben_coeffs(wp, kp, lp, n_ruben=n_ruben)
+        coeffs_n = _ruben_coeffs(wn, kn, ln, n_ruben=n_ruben)
 
-    # Ruben's series coefficients depend only on (w, k, l), not on the
-    # evaluation point -- compute them once per dens_deriv call and reuse
-    # across every scalar quadrature callback below, rather than
-    # rebuilding the series from scratch on each of the (potentially
-    # hundreds of) points the inner quad() sweeps per integral.
-    coeffs_p = _ruben_coeffs(wp, kp, lp, n_ruben=n_ruben)
-    coeffs_n = _ruben_coeffs(wn, kn, ln, n_ruben=n_ruben)
+        def fp(y, n):
+            v, _ = _ruben_eval(coeffs_p, float(y), m, output="pdf", nx=n)
+            return float(v)
 
-    def fp(y, n):
-        v, _ = _ruben_eval(coeffs_p, float(y), m, output="pdf", nx=n)
-        return float(v)
+        def fm(v, n):
+            r, _ = _ruben_eval(coeffs_n, float(v), 0.0, output="pdf", nx=n)
+            return float(r)
 
-    def fm(v, n):
-        r, _ = _ruben_eval(coeffs_n, float(v), 0.0, output="pdf", nx=n)
-        return float(r)
+        xf = x.ravel()
+        vals = np.array([_conv_dens_deriv(xx, m, nx, fp, fm, AbsTol, RelTol)
+                         for xx in xf])
+        fd = vals.reshape(x.shape)
 
-    xf = x.ravel()
-    vals = np.array([_conv_dens_deriv(xx, m, nx, fp, fm, AbsTol, RelTol)
-                     for xx in xf])
-    return vals.reshape(x.shape)
+    # Either series route (same-sign Ruben, or the mixed-sign convolution
+    # above) can become numerically unstable for extreme non-centralities
+    # (e.g. a quadratic boundary whose curvature is small relative to its
+    # linear part), where the underlying expansion or its inner integral
+    # returns a non-finite value. Recover those points with the direct Imhof
+    # inversion instead -- slower, but it doesn't rely on the same series
+    # expansion, so it stays robust here.
+    fd_flat = fd.ravel()
+    bad = ~np.isfinite(fd_flat)
+    if np.any(bad):
+        fixed, _ = imhof(x.ravel()[bad], w, k, l, s, m, output="dens", nx=nx,
+                         precision=precision, AbsTol=AbsTol, RelTol=RelTol)
+        fd_flat = fd_flat.copy()
+        fd_flat[bad] = np.asarray(fixed, dtype=float).ravel()
+        fd = fd_flat.reshape(x.shape)
+    return fd
 
 
 def _conv_dens_deriv(xx, m, nx, fp, fm, AbsTol, RelTol):
