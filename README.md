@@ -279,9 +279,9 @@ print("p (upper) =", gx2.cdf(x_q, w, k, l, s, m, side='upper', method='ray', n_r
 ```
 ```
 x_q = [-24365.14269438 -47950.03867407]
-p = [-1001.58607239 -2005.86068306]
+p = [-1006.24736289 -2014.43928422]
 x_q (upper) = [ 9723.84451406 19159.3719629 ]
-p (upper) = [-1000.82101043 -2002.16961528]
+p (upper) = [ -999.44410366 -2000.06198604]
 ```
 
 #### An elliptic distribution
@@ -683,32 +683,24 @@ plt.show()
 ```
 ![True cdf vs. its 2nd-order Taylor approximation, as Q_2(1,1) is varied](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/15_taylor_boundary.png)
 
-### Worked example: the error Hessian at an optimal quadratic boundary
+### Gradient and Hessian of classification error at the optimal boundary between two normal classes
 
-Take two normal classes and find the quadratic (Bayes-optimal) boundary between them -- problem 5 from Table 2.2.1.1 of `gx2_derivatives.md` (a 2-D "same-sign contrast" case: same mean offset in both classes, but class 1 narrower in both directions). Then get the Hessian of the total classification error with respect to the boundary's coefficients, analytically, with `gx2.norm_err_grad_bd`. Since the boundary is already optimal, the gradient of the error wrt the boundary coefficients is zero -- only the Hessian, describing how the error curves around that optimum, is informative.
+Take two normal classes and find the quadratic (Bayes-optimal) boundary between them:
 
 ```python
-# Problem 5 of gx2_derivatives.md Table 2.2.1.1/2.2.1.2: two 2-D Gaussians,
-# equal priors, with a same-sign contrast in covariance.
 mu0, v0 = np.array([-.3, -.3]), np.array([[1., 0.], [0., 1.]])
 mu1, v1 = np.array([.3, .3]), np.array([[.4, 0.], [0., .6]])
 p0 = p1 = 0.5
 
 # The optimal (Bayes) quadratic boundary q(x) = x'Q2 x + q1'x + q0 = 0
-# between two normals (class 1 favored where q(x)>0); see IntClassNorm's
-# opt_class_quad.m.
-v0inv, v1inv = np.linalg.inv(v0), np.linalg.inv(v1)
-quad = {'q2': 0.5 * (v0inv - v1inv),
-        'q1': v1inv @ mu1 - v0inv @ mu0,
-        'q0': (0.5 * (mu0 @ v0inv @ mu0 - mu1 @ v1inv @ mu1)
-               + 0.5 * (np.linalg.slogdet(v0)[1] - np.linalg.slogdet(v1)[1])
-               + np.log(p1 / p0))}
+# between two normals (class 1 favored where q(x)>0)
+quad = gx2.opt_norm_quad_bd(mu0, v0, mu1, v1, p0=p0, p1=p1)
 
 def q(x, quad):
     return (np.einsum('i...,ij,j...->...', x, quad['q2'], x)
             + np.einsum('i,i...->...', quad['q1'], x) + quad['q0'])
 
-def cov_ellipse(mu, v, n_std=2, n_pts=200):
+def cov_ellipse(mu, v, n_std=1, n_pts=200):
     theta = np.linspace(0, 2 * np.pi, n_pts)
     circle = np.stack([np.cos(theta), np.sin(theta)])
     eigval, eigvec = np.linalg.eigh(v)
@@ -722,22 +714,20 @@ Q = q(np.stack([X1, X2]), quad)
 plt.figure()
 plt.plot(*cov_ellipse(mu0, v0), 'b-', label='class 0')
 plt.plot(*cov_ellipse(mu1, v1), 'r-', label='class 1')
-plt.plot(*mu0, 'b+', markersize=10)
-plt.plot(*mu1, 'r+', markersize=10)
 plt.contour(X1, X2, Q, levels=[0], colors='k')
 plt.plot([], [], 'k-', label='optimal boundary')  # legend entry for the contour
 plt.gca().set_aspect('equal')
 plt.xlabel('$x_1$'); plt.ylabel('$x_2$')
 plt.legend()
-plt.title(r'Optimal quadratic boundary between two Gaussians ($2\sigma$ ellipses shown)')
 plt.show()
 ```
 ![The two classes' covariance ellipses and the optimal quadratic boundary between them](https://raw.githubusercontent.com/abhranildas/gx2-py/main/getting-started/16_optimal_boundary.png)
 
-Gradient (zero, since the boundary is already optimal) and Hessian of the classification error wrt the boundary coefficients:
+Compute the classification error, its gradient at this boundary (zero here, since the boundary is already optimal), and Hessian wrt the boundary coefficients:
 
 ```python
-grad, hess = gx2.norm_err_grad_bd(mu0, v0, mu1, v1, quad, p0=p0, p1=p1, hess=True)
+err, grad, hess = gx2.norm_err(mu0, v0, mu1, v1, quad, p0=p0, p1=p1, hess=True)
+print(f"classification error at the optimal boundary: {err:.4f}")
 print("dE/dQ2 (~0):\n", grad['q2'])
 print("dE/dq1 (~0):", grad['q1'])
 print(f"dE/dq0 (~0): {grad['q0']:.2e}")
@@ -752,6 +742,7 @@ print("d2E/dq0dQ2:\n", hess['q0q2'])
 print(f"d2E/dq0^2: {hess['q0q0']:.4f}")
 ```
 ```
+classification error at the optimal boundary: 0.2776
 dE/dQ2 (~0):
  [[-1.38777878e-17  6.24500451e-17]
  [ 6.24500451e-17 -2.77555756e-17]]
