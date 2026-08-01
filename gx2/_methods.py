@@ -200,6 +200,28 @@ def _ruben_coeffs(w, k, l, n_ruben=1000):
     # single pass, and the expensive evaluation is then done once at that
     # reduced size. n_ruben is the safety cap; most cases converge in ~1e2
     # terms well under it.
+    #
+    # Either branch below can instead exhaust n_ruben without its stopping
+    # criterion ever firing -- a real outcome, not a formal edge case: it
+    # happens whenever the smallest |w_j| is small enough that the implied
+    # scale beta=0.90625*min|w_j| makes (x-m)/beta huge, which is exactly
+    # what a near-rank-deficient quadratic boundary produces just off its
+    # exact zero-eigenvalue point. There the series provably still
+    # converges, but needs many more terms than are safe to compute here (a
+    # single extra order of magnitude in N costs two more in runtime, since
+    # the recursion is O(N^2)); confirmed directly on such a case: it
+    # doesn't converge or match Imhof until N~2e4, taking >0.5s, versus
+    # Imhof's ~0.01s for the same point at any N. So this cap is a genuine
+    # efficiency boundary, not just a safety net, and a fixed larger cap
+    # would only move the failure to a slightly more extreme case, not
+    # remove it. We signal this with NaN (via the python for/else, which
+    # runs only when the loop never broke) rather than returning whatever
+    # badly-truncated partial sum the loop stopped at -- both of this
+    # function's callers already treat a non-finite Ruben output as "fall
+    # back to Imhof" (cdf's "auto" method, and dens_deriv's same-sign and
+    # mixed-sign routes), so this reuses that existing, already-tested path
+    # instead of adding a new failure signal each caller would need to
+    # learn about separately.
     masstol = 1e-14
     a = np.full(n_ruben, np.nan)
     a[0] = np.sqrt(np.exp(-np.sum(l)) * beta ** M * np.prod(w ** (-k)))
@@ -223,6 +245,8 @@ def _ruben_coeffs(w, k, l, n_ruben=1000):
             if b[j] < masstol * cum:
                 N = j + 1
                 break
+        else:
+            return dict(a=np.full(1, np.nan), N=1, beta=beta, M=M, w_pos=w_pos)
         a = b[:N] / cum
     else:
         cum = a[0]
@@ -233,6 +257,8 @@ def _ruben_coeffs(w, k, l, n_ruben=1000):
             if 1 - cum < masstol:
                 N = j + 1
                 break
+        else:
+            return dict(a=np.full(1, np.nan), N=1, beta=beta, M=M, w_pos=w_pos)
         a = a[:N]
 
     return dict(a=a, N=N, beta=beta, M=M, w_pos=w_pos)
@@ -283,6 +309,15 @@ def ruben(x, w, k, l, m, side="lower", output="cdf", nx=0, n_ruben=1000):
     nx : int, optional
         x-derivative order of the pdf (0 gives the plain pdf, the default).
         Only defined for ``output='pdf'``.
+    n_ruben : int, optional
+        Term-count cap. If the series hasn't converged within this many
+        terms (checked cheaply from the coefficients alone, before the
+        expensive per-``x`` evaluation) -- which happens when the smallest
+        ``|w|`` is small enough to need far more terms than are efficient to
+        compute here -- this returns NaN rather than a value truncated at an
+        arbitrary, unverified point. Callers that dispatch across methods
+        (:func:`gx2.cdf`'s ``method='auto'``, and :func:`gx2.dens_deriv`)
+        already treat a non-finite Ruben output as "fall back to Imhof".
     """
     if nx and output != "pdf":
         raise ValueError("The x-derivative order 'nx' is only defined for "

@@ -1,52 +1,75 @@
-"""Wider benchmark of ``gx2.norm_err_grad_bd`` (analytic gradient/Hessian of
+"""Wider benchmark of ``gx2.norm_err`` (analytic gradient/Hessian of
 total two-class classification error w.r.t. the boundary coefficients) on
 real binary-Gaussian classification problems spanning D=1..5.
 
 For each problem this computes the optimal quadratic (Bayes) boundary, then
-compares three ways of getting the gradient/Hessian of the classification
-error w.r.t. that boundary's coefficients (q2,q1,q0):
+compares three ways of getting the *Hessian* of the classification error
+w.r.t. that boundary's coefficients (q2,q1,q0) there:
   - a tight-tolerance analytic evaluation, treated as ground truth;
   - the default-tolerance analytic evaluation (production settings);
   - finite differences via ``numdifftools`` (Richardson-extrapolated).
+(The gradient is also recorded at this boundary, but it's identically ~0
+there -- it's the error minimizer -- so it's not a useful accuracy
+benchmark on its own; see the Fisher-boundary gradient test below for one
+that is.) Some problems are deliberately included *because* one or both
+methods may be slow there (mixed-sign, higher-dimension boundaries) -- the
+point of this benchmark is partly to demonstrate exactly that contrast, not
+to avoid it.
 
-Some problems are deliberately included *because* one or both methods may be
-slow there (mixed-sign, higher-dimension boundaries) -- the point of this
-benchmark is partly to demonstrate exactly that contrast, not to avoid it.
-Each of the four measured stages (ground truth, default-tol, FD gradient, FD
-Hessian) runs in its own subprocess with a wall-clock timeout
-(``STAGE_TIMEOUT_S``); a stage that doesn't finish in time is recorded as
-"timeout" rather than blocking the run indefinitely.
+Each problem also gets the same tight/default/FD comparison for the plain
+*gradient* (no Hessian) at a second, deliberately non-optimal boundary: the
+Fisher boundary, i.e. the linear discriminant obtained by replacing both
+classes' true covariances with their pooled covariance (see
+``fisher_boundary``). Because that boundary isn't optimal for the real
+(unequal-covariance) problem, the error's gradient there is generically
+nonzero, which is exactly what the optimal-boundary Hessian test's own
+gradient can't offer.
+
+Every one of a problem's stages (4 for the optimal-boundary Hessian test, 3
+for the Fisher-boundary gradient test -- ground truth, default-tol, FD; no FD
+Hessian is computed there) runs in its own subprocess, with no wall-clock cap:
+a stage runs to completion however long it needs (some of these, by design,
+take hours -- see below), rather than being killed on a timeout. The
+subprocess boundary here is only for per-stage warning capture (see
+``_mp_call``), not for enforcing a time limit.
 
 Designed to run on a separate, faster, multi-core machine. Parallelism is at
-the *stage* level, not the problem level: all 4 stages of every problem
-are submitted to one ``ProcessPoolExecutor`` up front, so a
-worker that finishes a millisecond-long stage (e.g. a D=1 problem's default-
-tolerance analytic Hessian) immediately pulls the next queued stage from
-*anywhere* in the whole set, rather than idling once its own problem's
-4-stage pipeline happens to be briefly done while a handful of slow problems
-(mixed-sign, higher-D) still run for hours. Every stage is independent of
-every other stage (a problem's 4 stages don't feed into each other -- they
-each just need that problem's boundary, computed once up front); only the
-final error/speed comparison needs a problem's ground-truth stage to have
-finished, so that comparison is deferred until all 4 of a problem's stages
-have returned, however they interleave with everyone else's.
+the *problem* level only, one problem per ``ProcessPoolExecutor`` worker,
+which runs that problem's stages one after another rather than fanning them
+out further -- and every worker is pinned to a single thread (the
+OMP/OpenBLAS/MKL/numexpr env vars set at the very top of this file, before
+numpy is ever imported, in every process this script spawns). Together
+these two choices mean a problem's reported time is what it actually costs
+running alone on one core, not smeared across however many other problems
+or BLAS threads happened to be sharing the machine at that moment. This
+trades away throughput for correctness: a handful of genuinely slow problems
+(mixed-sign, higher-D FD Hessians can run for hours) can now each occupy a
+worker for its whole duration while fast, already-finished-in-milliseconds
+problems sit queued behind them, so the *total* wall-clock for the whole
+sweep is no longer close to optimal -- only the correctness of each
+individual problem's own number is guaranteed. (An earlier version of this
+script scheduled at the stage level instead, precisely to avoid that
+idling; if throughput ever matters more than clean single-threaded timing
+again, that design is the one to revert to.)
+
 Results are written incrementally (one JSON file per problem, updated after
-each stage returns) so a killed or crashed run still leaves usable
-diagnostics for whatever finished. All such writes happen in the main
-process only (never inside a worker), so there's no multi-process race on
-a problem's result file even though its 4 stages may finish on 4 different
-workers at 4 different times.
+every stage) so a killed or crashed run still leaves usable diagnostics for
+whatever finished. This is safe for a worker to do directly to disk itself
+(unlike under the old stage-level design, where several workers could touch
+the same problem's file concurrently): here exactly one worker owns a given
+problem's file for that problem's entire lifetime, so there's no
+multi-process race to guard against.
 
 Any warning raised while computing a stage (numpy overflow/invalid-value,
 scipy's IntegrationWarning, gx2's own ImhofClipWarning, ...) is redirected
-into that problem's own log_<name>.log, tagged with which of the 4 stages
-raised it, instead of going to stderr where it would be interleaved with
-every other worker's output and impossible to attribute afterward.
+into that problem's own log_<name>.log, tagged with which stage raised it,
+instead of going to stderr where it would be interleaved with every other
+worker's output and impossible to attribute afterward.
 
 Deliberately NOT using ``joblib`` for the outer parallelism: joblib's default
 ``loky`` backend monkeypatches the global multiprocessing context on Windows
 in a way that breaks the plain ``multiprocessing.Process`` objects used below
-for per-stage timeouts (nesting the two raises
+for per-stage subprocess isolation (nesting the two raises
 ``AttributeError: 'Process' object has no attribute 'env'`` -- caught directly
 while testing this script, not a theoretical concern). The standard library's
 ``ProcessPoolExecutor`` doesn't have this problem.
@@ -57,8 +80,28 @@ Requires, in addition to gx2's own dependencies: numdifftools.
 Usage:
     python bench_norm_err_bd.py [output_dir]
 """
-import json
 import os
+
+# Force every numeric library's internal thread pool to size 1, and do it
+# *before* numpy (and whatever BLAS backend it loads) is ever imported --
+# these are read once at that import/init time, not re-checked later. Since
+# every process this script spawns (each ProcessPoolExecutor worker, and
+# each nested per-stage multiprocessing.Process) re-executes this module
+# from scratch under Windows' "spawn" start method, this line reliably runs
+# again, before numpy, in every one of them -- so single-threadedness here
+# doesn't depend on environment inheritance working correctly, only on this
+# module being imported fresh each time, which spawn guarantees. Without
+# this, a single linear-algebra call could silently fan out across every
+# core via BLAS/OpenMP, and running N problems concurrently (the whole point
+# of problem-level parallelism, see the module docstring) would oversubscribe
+# the machine by a factor of N -- making every problem's measured time
+# depend on how many *other* problems happened to be running at that moment,
+# not on the problem itself.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ[_v] = "1"
+
+import json
 import queue
 import sys
 import time
@@ -74,12 +117,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import gx2
 
 OUTDIR = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
-
-STAGE_TIMEOUT_S = 1800  # 30 min per stage. Generous enough for legitimately
-                         # slow-but-finishing cases; bounded enough that a
-                         # stage that's genuinely impractical (the point being
-                         # demonstrated for some problems below) gets recorded
-                         # as "timeout" instead of blocking the whole run.
 
 # ---------------------------------------------------------------------------
 # The problems. Hardcoded (no live randomness) so this file and any
@@ -125,7 +162,7 @@ PROBLEMS = [
 
     # D=2, hyperbolic: the density-cusp case -- the boundary lands exactly on
     # the mixed-sign, k=1 offset m (see gx2_derivatives.md open item 3.3/§1.5
-    # and the cusp handling in cdf_grad_norm_quad/norm_err_grad_bd).
+    # and the cusp handling in cdf_grad_norm_quad/norm_err).
     dict(name="9_D2_generic_crossed", mu0=[.3, -.3], v0=[[0.5, 0], [0, 2.0]],
          mu1=[-.3, .3], v1=[[2.0, 0], [0, 0.5]]),
 
@@ -200,26 +237,30 @@ PROBLEMS = [
 P0 = P1 = 0.5  # equal priors throughout
 
 # ---------------------------------------------------------------------------
-# Optimal quadratic (Bayes) boundary between two Gaussians. Region q(x)>0
-# decides class 1. Matches IntClassNorm's opt_class_quad.m (class1<->norm_1,
-# class0<->norm_2) -- cross-checked against it and against finite differences
-# of the classification error itself (the gradient/Hessian of the error must
-# vanish/be positive-definite at this boundary, since it's the error
-# minimizer; both checks passed during development).
+# The Fisher (linear discriminant) boundary: the same Bayes-boundary formula
+# as gx2.opt_norm_quad_bd, but with both classes' covariances replaced by their
+# prior-weighted pooled covariance p0*v0+p1*v1 -- the population analogue of
+# a sample-size-weighted pooled covariance, consistent with how p0/p1 weight
+# everything else in this script. Both covariances being equal collapses q2
+# to exactly the zero matrix, so this boundary is purely linear.
+#
+# It is deliberately *not* the optimal boundary for the true, unequal-
+# covariance problem, so evaluating the real classification error's gradient
+# there (using each class's true v0/v1, not the pooled one) generically
+# gives a nonzero vector -- unlike at the optimum, where the gradient is
+# ~0 by construction and so useless as an accuracy benchmark. This is the
+# boundary the fisher_* stages below use for that reason.
 # ---------------------------------------------------------------------------
-def opt_boundary(mu0, v0, mu1, v1, p0=P0, p1=P1):
+def fisher_boundary(mu0, v0, mu1, v1, p0=P0, p1=P1):
     mu0 = np.atleast_1d(np.asarray(mu0, dtype=float))
     mu1 = np.atleast_1d(np.asarray(mu1, dtype=float))
     v0 = np.atleast_2d(np.asarray(v0, dtype=float))
     v1 = np.atleast_2d(np.asarray(v1, dtype=float))
-    v0inv = np.linalg.inv(v0)
-    v1inv = np.linalg.inv(v1)
-    q2 = 0.5 * (v0inv - v1inv)
-    q1 = v1inv @ mu1 - v0inv @ mu0
-    q0 = (0.5 * (mu0 @ v0inv @ mu0 - mu1 @ v1inv @ mu1)
-          + 0.5 * (np.linalg.slogdet(v0)[1] - np.linalg.slogdet(v1)[1])
-          + np.log(p1 / p0))
-    return {"q2": q2, "q1": q1, "q0": float(q0)}
+    vp_inv = np.linalg.inv(p0 * v0 + p1 * v1)
+    D = mu0.size
+    q1 = vp_inv @ (mu1 - mu0)
+    q0 = 0.5 * (mu0 @ vp_inv @ mu0 - mu1 @ vp_inv @ mu1) + np.log(p1 / p0)
+    return {"q2": np.zeros((D, D)), "q1": q1, "q0": float(q0)}
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +350,27 @@ def _safe_contract(H, W):
     return float(np.sum(prod))
 
 
+def _safe_max_abs_diff(a, b):
+    """max(abs(a-b)) without agreeing +-inf entries turning into nan: at the
+    density-cusp boundary (problem 9; see gx2_derivatives.md open item 3.3
+    and Table 2.2.1.1's problem-9 footnotes), both the ground-truth and the
+    default-tolerance analytic Hessian are genuinely +inf at every entry, so
+    they agree exactly there and the true error is 0 -- but plain a-b computes
+    IEEE inf-inf=nan for every such entry, and that nan then poisons the
+    whole np.max even though every other entry may be perfectly finite and
+    the two arrays otherwise agree. A mismatched pair (one side inf, the
+    other finite) is a genuine, real disagreement and must still register as
+    inf, which the diff already does correctly on its own -- only the
+    same-sign-inf-vs-same-sign-inf case needs the override.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    diff = np.abs(a - b)
+    agreeing_inf = np.isinf(a) & np.isinf(b) & (np.sign(a) == np.sign(b))
+    diff = np.where(agreeing_inf, 0.0, diff)
+    return float(np.max(diff))
+
+
 def _hess_dir(hess, dq2a, dq1a, dq0a, dq2b, dq1b, dq0b):
     val = _safe_contract(hess["q2q2"], np.multiply.outer(dq2a, dq2b))
     val += _safe_contract(hess["q1q2"], np.multiply.outer(dq1a, dq2b))
@@ -336,20 +398,16 @@ def hess_flat(hess, D):
 # Per-problem worker
 # ---------------------------------------------------------------------------
 def total_err(theta, mu0, v0, mu1, v1, D, p0=P0, p1=P1):
-    quad = unflatten(theta, D)
-    w0, k0, l0, s0, m0 = gx2.norm_quad_to_gx2_params(mu0, v0, quad)
-    w1, k1, l1, s1, m1 = gx2.norm_quad_to_gx2_params(mu1, v1, quad)
-    F0 = gx2.cdf(0, w0, k0, l0, s0, m0)
-    F1 = gx2.cdf(0, w1, k1, l1, s1, m1)
-    return p0 * (1 - F0) + p1 * F1
+    return gx2.norm_err(mu0, v0, mu1, v1, unflatten(theta, D), p0=p0, p1=p1)
 
 
 # ---------------------------------------------------------------------------
-# Per-stage timeout. Each stage runs in its own subprocess so a genuinely
-# impractical case (some of these problems are here specifically to show
-# that) can be killed on a wall-clock budget instead of blocking the run.
-# Stage functions are plain top-level functions (not closures) so they can
-# be pickled and sent to the subprocess; any closures they need internally
+# Per-stage subprocess. Each stage runs in its own subprocess purely so its
+# warnings can be captured and attributed (see _mp_call) -- there is no
+# wall-clock cap, so a genuinely slow stage (some of these problems are here
+# specifically to show that) simply runs until it finishes, however long that
+# takes. Stage functions are plain top-level functions (not closures) so they
+# can be pickled and sent to the subprocess; any closures they need internally
 # (e.g. fd_fun below) are created only after the subprocess starts, so they
 # never need to cross the pickling boundary themselves.
 # ---------------------------------------------------------------------------
@@ -381,25 +439,22 @@ def _mp_call(q, func, args, tag=None, warn_log_path=None):
         q.put(("error", traceback.format_exc()))
 
 
-def run_with_timeout(func, args, timeout_s=STAGE_TIMEOUT_S, tag=None, warn_log_path=None):
+def run_in_subprocess(func, args, tag=None, warn_log_path=None):
     """Run func(*args) in a subprocess; returns (status, value) with status
-    in {'ok', 'error', 'timeout'}. Terminates the subprocess on timeout."""
+    in {'ok', 'error'}. No timeout: blocks until the subprocess finishes,
+    however long that takes."""
     q = mp.Queue()
     p = mp.Process(target=_mp_call, args=(q, func, args, tag, warn_log_path))
     p.start()
-    p.join(timeout_s)
-    if p.is_alive():
-        p.terminate()
-        p.join()
-        return "timeout", None
+    p.join()
     try:
         return q.get(timeout=5)
     except queue.Empty:
         return "error", "worker exited without producing a result"
 
 
-def _stage_analytic(mu0, v0, mu1, v1, quad, p0, p1, tol_kwargs):
-    return gx2.norm_err_grad_bd(mu0, v0, mu1, v1, quad, p0=p0, p1=p1, hess=True, **tol_kwargs)
+def _stage_analytic(mu0, v0, mu1, v1, quad, p0, p1, tol_kwargs, hess=True):
+    return gx2.norm_err(mu0, v0, mu1, v1, quad, p0=p0, p1=p1, grad=True, hess=hess, **tol_kwargs)
 
 
 def _stage_fd_grad(theta0, mu0, v0, mu1, v1, D, p0, p1, log_path):
@@ -437,86 +492,17 @@ def _write_partial(path, result):
     os.replace(tmp, path)  # atomic on both POSIX and Windows
 
 
-def _run_stage_task(name, stage, func, args, timeout_s, log_path):
-    """Top-level, picklable wrapper run inside a ProcessPoolExecutor worker:
-    times run_with_timeout(func, args) and tags the result with which
-    (problem, stage) it belongs to, so the main process's as_completed loop
-    can route it without needing the tasks to finish in submission order.
-    Also routes any warnings raised during this stage into the problem's own
-    log file, tagged with the stage name (see _mp_call)."""
-    t0 = time.perf_counter()
-    status, value = run_with_timeout(func, args, timeout_s=timeout_s, tag=stage, warn_log_path=log_path)
-    elapsed = time.perf_counter() - t0
-    return name, stage, status, value, elapsed
-
-
-# ---------------------------------------------------------------------------
-# Build the flat list of 4*len(PROBLEMS) independent stage-tasks. A problem's
-# boundary (opt_boundary/flatten) is cheap and deterministic, so it's
-# computed once here in the main process, not inside a worker.
-# ---------------------------------------------------------------------------
-def build_tasks(outdir, timeout_s):
-    tasks = []              # list of (name, stage, func, args, timeout_s)
-    results = {}            # name -> partial result dict, filled in as stages return
-    remaining = {}          # name -> count of stages not yet returned
-    log_paths = {}          # name -> its log file path
-
-    for problem in PROBLEMS:
-        name = problem["name"]
-        log_path = os.path.join(outdir, f"log_{name}.log")
-        log_paths[name] = log_path
-
-        def log(msg, log_path=log_path):
-            with open(log_path, "a") as fh:
-                fh.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-
-        mu0 = np.atleast_1d(np.asarray(problem["mu0"], dtype=float))
-        v0 = np.atleast_2d(np.asarray(problem["v0"], dtype=float))
-        mu1 = np.atleast_1d(np.asarray(problem["mu1"], dtype=float))
-        v1 = np.atleast_2d(np.asarray(problem["v1"], dtype=float))
-        p0 = problem.get("p0", P0)
-        p1 = problem.get("p1", P1)
-        D = mu0.size
-        P = n_params(D)
-        result = dict(name=name, D=D, P=P, mu0=mu0.tolist(), v0=v0.tolist(),
-                      mu1=mu1.tolist(), v1=v1.tolist(), p0=p0, p1=p1)
-        log(f"starting, D={D}, P={P}")
-
-        try:
-            quad = opt_boundary(mu0, v0, mu1, v1, p0=p0, p1=p1)
-            theta0 = flatten(quad, D)
-            result["quad"] = {k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in quad.items()}
-            log("boundary computed")
-            tasks.append((name, "ground_truth", _stage_analytic,
-                          (mu0, v0, mu1, v1, quad, p0, p1,
-                           dict(AbsTol=1e-12, RelTol=1e-10, n_ruben=5000))))
-            tasks.append((name, "default_tol", _stage_analytic,
-                          (mu0, v0, mu1, v1, quad, p0, p1, {})))
-            tasks.append((name, "fd_grad", _stage_fd_grad,
-                          (theta0, mu0, v0, mu1, v1, D, p0, p1, log_path)))
-            tasks.append((name, "fd_hess", _stage_fd_hess,
-                          (theta0, mu0, v0, mu1, v1, D, p0, p1, log_path, 9)))
-            remaining[name] = 4
-        except Exception:
-            result["error"] = traceback.format_exc()
-            remaining[name] = 0
-            log("PROBLEM_FAILED (boundary setup):\n" + result["error"])
-
-        results[name] = result
-
-    return tasks, results, remaining, log_paths
-
-
-def handle_stage_result(name, stage, status, value, elapsed, results):
-    """Store one stage's raw (flattened) output into results[name]. Doesn't
-    compute cross-stage errors yet -- stages can return in any order, so
-    that's deferred to finalize_problem once all 4 have arrived."""
-    D = results[name]["D"]
-    entry = results[name]
+def _store_stage_result(entry, stage, status, value, elapsed, D):
+    """Store one stage's raw (flattened) output into entry, in place. The
+    4 optimal-boundary Hessian-test stages keep their original top-level
+    field names (ground_truth/default_tol/fd_grad/fd_hess); the 3
+    Fisher-boundary gradient-test stages nest under entry["fisher"] instead,
+    keyed by the same ground_truth/default_tol/fd_grad names, so the two
+    tests never collide despite sharing a stage-naming convention."""
     if stage == "ground_truth":
         if status == "ok":
-            grad_gt, hess_gt = value
-            entry["ground_truth"] = dict(status=status, time_s=elapsed,
+            err_gt, grad_gt, hess_gt = value
+            entry["ground_truth"] = dict(status=status, time_s=elapsed, err=err_gt,
                                           grad=grad_flat(grad_gt, D).tolist(),
                                           hess=hess_flat(hess_gt, D).tolist(),
                                           tol="AbsTol=1e-12, RelTol=1e-10, n_ruben=5000")
@@ -524,8 +510,8 @@ def handle_stage_result(name, stage, status, value, elapsed, results):
             entry["ground_truth"] = dict(status=status, time_s=elapsed, detail=str(value))
     elif stage == "default_tol":
         if status == "ok":
-            grad_d, hess_d = value
-            entry["default_tol"] = dict(status=status, time_s=elapsed,
+            err_d, grad_d, hess_d = value
+            entry["default_tol"] = dict(status=status, time_s=elapsed, err=err_d,
                                          grad=grad_flat(grad_d, D).tolist(),
                                          hess=hess_flat(hess_d, D).tolist(),
                                          tol="AbsTol=1e-10, RelTol=1e-6 (package defaults)")
@@ -549,13 +535,32 @@ def handle_stage_result(name, stage, status, value, elapsed, results):
                                                          "Hessian -- verified directly, not assumed)"))
         else:
             entry["fd_hess"] = dict(status=status, time_s=elapsed, detail=str(value))
+    elif stage in ("fisher_ground_truth", "fisher_default_tol"):
+        fkey = "ground_truth" if stage == "fisher_ground_truth" else "default_tol"
+        fisher = entry.setdefault("fisher", {})
+        if status == "ok":
+            err_f, grad = value  # hess=False here, so norm_err returns (err, grad)
+            tol = ("AbsTol=1e-12, RelTol=1e-10, n_ruben=5000" if fkey == "ground_truth"
+                   else "AbsTol=1e-10, RelTol=1e-6 (package defaults)")
+            fisher[fkey] = dict(status=status, time_s=elapsed, err=err_f,
+                                 grad=grad_flat(grad, D).tolist(), tol=tol)
+        else:
+            fisher[fkey] = dict(status=status, time_s=elapsed, detail=str(value))
+    elif stage == "fisher_fd_grad":
+        fisher = entry.setdefault("fisher", {})
+        if status == "ok":
+            fd_grad, n_calls = value
+            fisher["fd_grad"] = dict(status=status, time_s=elapsed, grad=fd_grad.tolist(),
+                                      n_calls=n_calls, numdifftools_opts="defaults (num_steps=15)")
+        else:
+            fisher["fd_grad"] = dict(status=status, time_s=elapsed, detail=str(value))
 
 
-def finalize_problem(name, results):
-    """All 4 stages of this problem have returned (in whatever order) --
-    compute the cross-stage errors/speeds that need ground truth, exactly
-    the same metrics run_problem used to compute inline."""
-    entry = results[name]
+def finalize_problem(entry):
+    """All of this problem's stages have returned -- compute the cross-stage
+    errors/speeds that need ground truth, for both the optimal-boundary
+    Hessian test (entry["summary"]) and the Fisher-boundary gradient test
+    (entry["fisher"]["summary"])."""
     gt = entry.get("ground_truth", {})
     grad_gt_flat = np.array(gt["grad"]) if gt.get("status") == "ok" else None
     hess_gt_flat = np.array(gt["hess"]) if gt.get("status") == "ok" else None
@@ -564,9 +569,9 @@ def finalize_problem(name, results):
     analytic_err_grad = analytic_err_hess = None
     if dt.get("status") == "ok":
         if grad_gt_flat is not None:
-            analytic_err_grad = float(np.max(np.abs(np.array(dt["grad"]) - grad_gt_flat)))
+            analytic_err_grad = _safe_max_abs_diff(dt["grad"], grad_gt_flat)
         if hess_gt_flat is not None:
-            analytic_err_hess = float(np.max(np.abs(np.array(dt["hess"]) - hess_gt_flat)))
+            analytic_err_hess = _safe_max_abs_diff(dt["hess"], hess_gt_flat)
         dt["analytic_err_grad"] = analytic_err_grad
         dt["analytic_err_hess"] = analytic_err_hess
 
@@ -588,16 +593,15 @@ def finalize_problem(name, results):
     t_fd_grad = fg.get("time_s") if fg.get("status") == "ok" else None
     t_fd_hess = fh.get("time_s") if fh.get("status") == "ok" else None
 
-    # Sum of the 4 stages' own time_s. Under the old one-worker-per-problem
-    # design this sum WAS the problem's observed wall-clock (stages ran back
-    # to back in one process); under stage-level scheduling the 4 stages can
-    # run on different workers at overlapping times, so this number is no
-    # longer directly observable as a single elapsed duration -- it's
-    # reconstructed here instead, so "how long would problem X take run in
-    # isolation, stage by stage" is still available even though it may now
-    # differ from this run's actual wall-clock for that problem.
+    # Sum of every stage's own time_s (now including the 3 Fisher stages
+    # below) -- since every stage of a problem now runs back to back in the
+    # one worker that owns it, this sum IS that problem's observed
+    # wall-clock, unlike under the old stage-level scheduler where a
+    # problem's stages could run on different workers at overlapping times.
+    fisher = entry.get("fisher", {})
     entry["summary"] = dict(
-        total_stage_time_s=sum(s.get("time_s", 0.0) for s in (gt, dt, fg, fh)),
+        total_stage_time_s=(sum(s.get("time_s", 0.0) for s in (gt, dt, fg, fh))
+                             + sum(s.get("time_s", 0.0) for s in fisher.values() if isinstance(s, dict))),
         rel_speed_grad=(t_fd_grad / t_default if t_default and t_fd_grad else None),
         rel_speed_hess=(t_fd_hess / t_default if t_default and t_fd_hess else None),
         rel_acc_grad=(fd_err_grad / analytic_err_grad
@@ -606,15 +610,119 @@ def finalize_problem(name, results):
                       if fd_err_hess is not None and analytic_err_hess else None),
     )
 
+    # Same cross-stage bookkeeping, but for the Fisher-boundary gradient-only
+    # test: no Hessian, so no *_hess fields.
+    if fisher:
+        fgt = fisher.get("ground_truth", {})
+        fisher_grad_gt = np.array(fgt["grad"]) if fgt.get("status") == "ok" else None
+
+        fdt = fisher.get("default_tol", {})
+        fisher_analytic_err_grad = None
+        if fdt.get("status") == "ok" and fisher_grad_gt is not None:
+            fisher_analytic_err_grad = float(np.max(np.abs(np.array(fdt["grad"]) - fisher_grad_gt)))
+            fdt["analytic_err_grad"] = fisher_analytic_err_grad
+
+        ffg = fisher.get("fd_grad", {})
+        fisher_fd_err_grad = None
+        if ffg.get("status") == "ok" and fisher_grad_gt is not None:
+            fisher_fd_err_grad = float(np.max(np.abs(np.array(ffg["grad"]) - fisher_grad_gt)))
+            ffg["err"] = fisher_fd_err_grad
+
+        t_fisher_default = fdt.get("time_s") if fdt.get("status") == "ok" else None
+        t_fisher_fd = ffg.get("time_s") if ffg.get("status") == "ok" else None
+        fisher["summary"] = dict(
+            rel_speed_grad=(t_fisher_fd / t_fisher_default if t_fisher_default and t_fisher_fd else None),
+            rel_acc_grad=(fisher_fd_err_grad / fisher_analytic_err_grad
+                          if fisher_fd_err_grad is not None and fisher_analytic_err_grad else None),
+        )
+
 
 # ---------------------------------------------------------------------------
-# Main: submit every problem's every stage as one flat pool of tasks. GPU is
-# not used -- the numerical bottleneck (scipy.integrate.quad_vec / mpmath
-# series) has no GPU path in gx2-py, and a from-scratch vectorized rewrite of
-# the integrator was already attempted and reverted upstream (see
-# gx2_derivatives.md open item 3.6). The lever that's actually available is
-# keeping every core fed with the next queued stage -- see the module
-# docstring for why that's done at stage granularity, not problem granularity.
+# Per-problem worker: runs one problem's entire pipeline -- boundary setup,
+# then all 7 stages one after another (4 for the optimal-boundary Hessian
+# test, 3 for the Fisher-boundary gradient test) -- inside a single
+# ProcessPoolExecutor worker. Parallelism is across problems only (see the
+# module docstring): each stage still gets its own nested subprocess via
+# run_in_subprocess (for warning capture, not timeout), but stages of the
+# *same* problem are never fanned out to different workers, and this worker
+# itself is pinned to one thread (the env vars at the top of this file).
+# Writes result_<name>.json to disk itself after every stage -- safe here
+# (unlike the old stage-level design) since this is the only process that
+# will ever touch this problem's file, for that problem's whole lifetime.
+# ---------------------------------------------------------------------------
+def _run_problem(problem, outdir):
+    name = problem["name"]
+    log_path = os.path.join(outdir, f"log_{name}.log")
+    result_path = os.path.join(outdir, f"result_{name}.json")
+
+    def log(msg):
+        with open(log_path, "a") as fh:
+            fh.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+
+    mu0 = np.atleast_1d(np.asarray(problem["mu0"], dtype=float))
+    v0 = np.atleast_2d(np.asarray(problem["v0"], dtype=float))
+    mu1 = np.atleast_1d(np.asarray(problem["mu1"], dtype=float))
+    v1 = np.atleast_2d(np.asarray(problem["v1"], dtype=float))
+    p0 = problem.get("p0", P0)
+    p1 = problem.get("p1", P1)
+    D = mu0.size
+    P = n_params(D)
+    result = dict(name=name, D=D, P=P, mu0=mu0.tolist(), v0=v0.tolist(),
+                  mu1=mu1.tolist(), v1=v1.tolist(), p0=p0, p1=p1)
+    _write_partial(result_path, result)
+    log(f"starting, D={D}, P={P}")
+
+    try:
+        quad = gx2.opt_norm_quad_bd(mu0, v0, mu1, v1, p0=p0, p1=p1)
+        theta0 = flatten(quad, D)
+        quad_fisher = fisher_boundary(mu0, v0, mu1, v1, p0=p0, p1=p1)
+        theta0_fisher = flatten(quad_fisher, D)
+        result["quad"] = {k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in quad.items()}
+        result["quad_fisher"] = {k: (v.tolist() if hasattr(v, "tolist") else v)
+                                  for k, v in quad_fisher.items()}
+        _write_partial(result_path, result)
+        log("boundaries computed (optimal + Fisher)")
+    except Exception:
+        result["error"] = traceback.format_exc()
+        _write_partial(result_path, result)
+        log("PROBLEM_FAILED (boundary setup):\n" + result["error"])
+        return name
+
+    tight = dict(AbsTol=1e-12, RelTol=1e-10, n_ruben=5000)
+    stage_defs = [
+        ("ground_truth", _stage_analytic, (mu0, v0, mu1, v1, quad, p0, p1, tight, True)),
+        ("default_tol", _stage_analytic, (mu0, v0, mu1, v1, quad, p0, p1, {}, True)),
+        ("fd_grad", _stage_fd_grad, (theta0, mu0, v0, mu1, v1, D, p0, p1, log_path)),
+        ("fd_hess", _stage_fd_hess, (theta0, mu0, v0, mu1, v1, D, p0, p1, log_path, 9)),
+        ("fisher_ground_truth", _stage_analytic, (mu0, v0, mu1, v1, quad_fisher, p0, p1, tight, False)),
+        ("fisher_default_tol", _stage_analytic, (mu0, v0, mu1, v1, quad_fisher, p0, p1, {}, False)),
+        ("fisher_fd_grad", _stage_fd_grad, (theta0_fisher, mu0, v0, mu1, v1, D, p0, p1, log_path)),
+    ]
+
+    try:
+        for stage, func, args in stage_defs:
+            t0 = time.perf_counter()
+            status, value = run_in_subprocess(func, args, tag=stage, warn_log_path=log_path)
+            elapsed = time.perf_counter() - t0
+            _store_stage_result(result, stage, status, value, elapsed, D)
+            _write_partial(result_path, result)
+            log(f"{stage}: {status} in {elapsed:.2f}s")
+        finalize_problem(result)
+    except Exception:
+        result["error"] = traceback.format_exc()
+        log("PROBLEM_FAILED (mid-run):\n" + result["error"])
+
+    _write_partial(result_path, result)
+    log("PROBLEM_DONE")
+    return name
+
+
+# ---------------------------------------------------------------------------
+# Main: submit one task per problem. GPU is not used -- the numerical
+# bottleneck (scipy.integrate.quad_vec / mpmath series) has no GPU path in
+# gx2-py, and a from-scratch vectorized rewrite of the integrator was
+# already attempted and reverted upstream (see gx2_derivatives.md open item
+# 3.6).
 # ---------------------------------------------------------------------------
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
@@ -624,12 +732,13 @@ def main():
         numpy_version=np.__version__,
         cpu_count=os.cpu_count(),
         n_workers=n_workers,
-        stage_timeout_s=STAGE_TIMEOUT_S,
-        parallelism_note=(f"stage-level: all 4 stages x {len(PROBLEMS)} problems "
-                           f"({4 * len(PROBLEMS)} tasks) submitted to one "
-                           f"ProcessPoolExecutor(max_workers={n_workers}) up front, so "
-                           "a worker that finishes a fast stage immediately dequeues "
-                           "the next one from anywhere in the set instead of idling."),
+        parallelism_note=(f"problem-level: each of the {len(PROBLEMS)} problems' full 7-stage "
+                           f"pipeline (4 optimal-boundary Hessian-test stages, 3 Fisher-boundary "
+                           f"gradient-test stages) runs sequentially inside one "
+                           f"ProcessPoolExecutor(max_workers={n_workers}) worker, pinned to a "
+                           "single thread (OMP/OpenBLAS/MKL/numexpr num_threads=1, set before "
+                           "numpy is imported in every process this script spawns). See the "
+                           "module docstring for why, and for the throughput this trades away."),
         gpu_note=("Not used: the numerical bottleneck is scipy.integrate.quad_vec "
                    "and mpmath series (CPU-only, no GPU path in gx2-py); a GPU-"
                    "vectorized rewrite was already attempted and reverted "
@@ -638,26 +747,31 @@ def main():
     with open(os.path.join(OUTDIR, "meta.json"), "w") as fh:
         json.dump(meta, fh, indent=2)
 
-    tasks, results, remaining, log_paths = build_tasks(OUTDIR, STAGE_TIMEOUT_S)
-    for name in results:
-        _write_partial(os.path.join(OUTDIR, f"result_{name}.json"), results[name])
+    # Placeholder result files for every problem, written up front (before
+    # any worker has necessarily started on it) so the pending set is
+    # visible on disk immediately; _run_problem overwrites its own with a
+    # fuller version as soon as it actually starts.
+    for problem in PROBLEMS:
+        D = np.atleast_1d(np.asarray(problem["mu0"], dtype=float)).size
+        placeholder = dict(name=problem["name"], D=D, P=n_params(D),
+                            mu0=problem["mu0"], v0=problem["v0"],
+                            mu1=problem["mu1"], v1=problem["v1"],
+                            p0=problem.get("p0", P0), p1=problem.get("p1", P1))
+        _write_partial(os.path.join(OUTDIR, f"result_{problem['name']}.json"), placeholder)
 
     with ProcessPoolExecutor(max_workers=n_workers) as ex:
-        futures = {ex.submit(_run_stage_task, name, stage, func, args, STAGE_TIMEOUT_S, log_paths[name]): (name, stage)
-                   for name, stage, func, args in tasks}
+        futures = {ex.submit(_run_problem, problem, OUTDIR): problem["name"]
+                   for problem in PROBLEMS}
         n_done, n_total = 0, len(futures)
         for fut in as_completed(futures):
-            name, stage, status, value, elapsed = fut.result()
+            name = futures[fut]
             n_done += 1
-            handle_stage_result(name, stage, status, value, elapsed, results)
-            remaining[name] -= 1
-            if remaining[name] == 0:
-                finalize_problem(name, results)
-            _write_partial(os.path.join(OUTDIR, f"result_{name}.json"), results[name])
-            with open(log_paths[name], "a") as fh:
-                fh.write(f"[{time.strftime('%H:%M:%S')}] {stage}: {status} in {elapsed:.2f}s"
-                          f"{' -- PROBLEM_DONE' if remaining[name] == 0 else ''}\n")
-            print(f"[{n_done}/{n_total}] {name} {stage}: {status} ({elapsed:.2f}s)")
+            try:
+                fut.result()
+                print(f"[{n_done}/{n_total}] {name}: done")
+            except Exception:
+                print(f"[{n_done}/{n_total}] {name}: WORKER CRASHED\n{traceback.format_exc()}",
+                      file=sys.stderr)
 
     # aggregation: glob whatever per-problem result files exist, so this
     # still produces a combined summary even if some problems didn't finish.

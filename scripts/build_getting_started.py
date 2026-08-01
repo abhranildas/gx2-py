@@ -97,6 +97,9 @@ FIGURE_MANIFEST = {
     "c37e0886": ("15_taylor_boundary",
                  "True cdf vs. its 2nd-order Taylor approximation, as "
                  "Q_2(1,1) is varied"),
+    "f5a6b7c8": ("16_optimal_boundary",
+                 "The two classes' covariance ellipses and the optimal "
+                 "quadratic boundary between them"),
 }
 
 
