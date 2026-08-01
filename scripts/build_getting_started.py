@@ -6,10 +6,14 @@ reflect the current code), saves the executed notebook back in place, then:
 
 1. Extracts every image/png cell output into getting-started/ (the folder
    is cleared first), named and captioned via FIGURE_MANIFEST below.
-2. Rewrites the auto-generated block of README.md (between the
-   BEGIN/END GENERATED markers in the "Examples" section) from the
-   notebook's cells: markdown cells (heading demoted one level), code cells
-   (as ```python blocks), and their text/image outputs.
+2. Rewrites README.md *entirely* from the notebook's cells: cell 0 (title,
+   author/citation, installation, public-functions table, help() list,
+   computation-methods table) verbatim, then every following cell -- markdown
+   (heading demoted one level, so cell 0's own headings stay the only
+   top-level ones) or code (as ```python blocks) with its text/image outputs.
+   README.md has no hand-maintained content of its own any more: every
+   section lives in the notebook, so there is exactly one place to edit each
+   piece of documentation, never both.
 
 Run this before tagging a release, whenever GettingStarted.ipynb changes:
 
@@ -52,11 +56,10 @@ RAW_BASE = "https://raw.githubusercontent.com/abhranildas/gx2-py/main"
 # the kernel's default matplotlib backend.
 MATPLOTLIB_SETUP = "%matplotlib inline"
 
-BEGIN_MARKER = (
-    "<!-- BEGIN GENERATED: getting-started "
-    "(do not edit by hand; regenerate with `python scripts/build_getting_started.py`) -->"
+README_HEADER = (
+    "<!-- This file is generated in full from GettingStarted.ipynb -- do not "
+    "edit by hand; regenerate with `python scripts/build_getting_started.py` -->\n\n"
 )
-END_MARKER = "<!-- END GENERATED: getting-started -->"
 
 # Maps a code cell's persistent notebook id -> (filename stem, alt text) for
 # each cell whose output is a plot. Add an entry here when you add a new
@@ -151,15 +154,20 @@ def text_output(cell) -> str:
     return "".join(parts).rstrip("\n")
 
 
-def build_examples_markdown(nb) -> tuple[str, set[str]]:
+def build_readme_markdown(nb) -> tuple[str, set[str]]:
     lines = []
     used_files = set()
     fig_counter = 0
-    # cell 0 is the intro (title, help() list, citation) -- the README
-    # already covers that in its own header, so start from cell 1.
-    for cell in nb.cells[1:]:
+    # Cell 0 is the whole static preamble (title, author/citation,
+    # installation, public-functions table, help() list, computation-methods
+    # table) and already ends in its own "## Examples" heading -- its
+    # headings must stay exactly as authored (top-level "#"/"##"), so only
+    # cells after it get demoted one level, nesting them as "###" etc. under
+    # that "## Examples" heading.
+    for i, cell in enumerate(nb.cells):
         if cell.cell_type == "markdown":
-            lines.append(demote_headings(cell.source.rstrip()))
+            src = cell.source.rstrip()
+            lines.append(demote_headings(src) if i > 0 else src)
             lines.append("")
         elif cell.cell_type == "code":
             src = cell.source.rstrip()
@@ -199,20 +207,8 @@ def build_examples_markdown(nb) -> tuple[str, set[str]]:
     return "\n".join(lines).rstrip() + "\n", used_files
 
 
-def update_readme(examples_markdown: str) -> None:
-    readme = README_PATH.read_text(encoding="utf-8")
-    pattern = re.compile(re.escape(BEGIN_MARKER) + r".*?" + re.escape(END_MARKER), re.DOTALL)
-    if not pattern.search(readme):
-        raise SystemExit(
-            "README.md is missing the generated-block markers.\n"
-            f"Add:\n{BEGIN_MARKER}\n{END_MARKER}\n"
-            "around the worked-examples section first."
-        )
-    replacement = f"{BEGIN_MARKER}\n\n{examples_markdown}\n{END_MARKER}"
-    # a plain string replacement (not pattern.sub(replacement, ...)) so that
-    # backslashes in the markdown (e.g. LaTeX like \lambda) aren't
-    # interpreted as regex backreferences
-    README_PATH.write_text(pattern.sub(lambda _: replacement, readme), encoding="utf-8")
+def write_readme(readme_markdown: str) -> None:
+    README_PATH.write_text(README_HEADER + readme_markdown, encoding="utf-8")
 
 
 def main() -> None:
@@ -234,8 +230,8 @@ def main() -> None:
         nb = execute_notebook(nb)
         nbformat.write(nb, NOTEBOOK_PATH)
 
-    examples_markdown, used_files = build_examples_markdown(nb)
-    update_readme(examples_markdown)
+    readme_markdown, used_files = build_readme_markdown(nb)
+    write_readme(readme_markdown)
     print(
         f"Updated {README_PATH.relative_to(REPO)} and {len(used_files)} "
         f"image(s) in {IMAGES_DIR.relative_to(REPO)}/"

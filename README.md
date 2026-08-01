@@ -1,11 +1,13 @@
+<!-- This file is generated in full from GettingStarted.ipynb -- do not edit by hand; regenerate with `python scripts/build_getting_started.py` -->
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/abhranildas/gx2-py/main/gx2_icon.png" alt="gx2" width="260">
 </p>
 
-# gx2 — Generalized chi-square distribution [![PyPI version](https://img.shields.io/pypi/v/gx2)](https://pypi.org/project/gx2/)
+# Generalized chi-square distribution [![PyPI version](https://img.shields.io/pypi/v/gx2)](https://pypi.org/project/gx2/)
 
 `gx2` is a python package that computes the statistics, characteristic function, pdf, cdf, inverse cdf,
-random numbers, and exact gradients/Hessians of the cdf, of the **generalized chi-square distribution**.
+random numbers, and exact gradients/Hessians of the cdf, of the generalized chi-square distribution.
 This is the python port of the
 [MATLAB toolbox](https://www.mathworks.com/matlabcentral/fileexchange/85028-generalized-chi-square-distribution).
 
@@ -30,6 +32,7 @@ If you use this code, please cite:
  - [A method to integrate and classify normal distributions](https://doi.org/10.1167/jov.21.10.1)
  - [New methods to compute the generalized chi-square distribution](https://www.tandfonline.com/doi/abs/10.1080/00949655.2025.2501401)
 
+
 ## Installation
 
 ```bash
@@ -44,16 +47,17 @@ in the getting-started notebook.
 | function | purpose |
 |----------|---------|
 | `norm_err(mu0, v0, mu1, v1, quad, p0=, p1=, grad=, hess=, ...)` | total classification error between two normal classes separated by a quadratic boundary (and optionally its gradient/Hessian wrt the boundary coefficients `q2, q1, q0`) |
+| `gx2_to_norm_quad_params(w, k, l, s, m)` | gx2 → quadratic-form coefficients of a standard normal |
+| `norm_quad_to_gx2_params(mu, v, quad, merge=)` | quadratic form of a normal → gx2 parameters |
 | `stat(w, k, l, s, m)` | mean and variance |
-| `char(t, w, k, l, s, m)` | characteristic function |
 | `rnd(w, k, l, s, m, size=, method=)` | random numbers |
+| `char(t, w, k, l, s, m)` | characteristic function |
 | `cdf(x, w, k, l, s, m, side=, method=, ...)` | cdf |
 | `pdf(x, w, k, l, s, m, side=, method=, ...)` | pdf |
 | `inv(p, w, k, l, s, m, side=, method=, ...)` | inverse cdf |
-| `gx2_to_norm_quad_params(w, k, l, s, m)` | gx2 → quadratic-form coefficients of a standard normal |
-| `norm_quad_to_gx2_params(mu, v, quad, merge=)` | quadratic form of a normal → gx2 parameters |
 | `cdf_grad_gx2(x, w, k, l, s, m, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the native parameters `w, k, l, s, m` |
 | `cdf_grad_norm_quad(x, mu, v, quad, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the quadratic boundary coefficients `q2, q1, q0` |
+| `opt_norm_quad_bd(mu0, v0, mu1, v1, p0=, p1=)` | optimal (Bayes) quadratic boundary between two normal classes, for use with `norm_err`/`cdf_grad_norm_quad` |
 
 For full documentation of any function, use Python's `help` (or `?` in
 Jupyter), e.g.:
@@ -70,6 +74,7 @@ help(gx2.pdf)
 help(gx2.inv)
 help(gx2.cdf_grad_gx2)
 help(gx2.cdf_grad_norm_quad)
+help(gx2.opt_norm_quad_bd)
 ```
 
 ## Computation methods for `cdf` / `pdf`
@@ -87,11 +92,10 @@ also force one:
 | `'pearson'` | Pearson's 3-moment approximation |
 | `'ellipse'` | ellipse approximation near a finite tail — requires all `w` the same sign and `s=0` |
 
+
 ## Examples
 
-The following are the worked examples from the interactive [`GettingStarted.ipynb`](GettingStarted.ipynb) notebook.
-
-<!-- BEGIN GENERATED: getting-started (do not edit by hand; regenerate with `python scripts/build_getting_started.py`) -->
+The following are the worked examples of the interactive [`GettingStarted.ipynb`](GettingStarted.ipynb) notebook.
 
 ```python
 import warnings
@@ -770,5 +774,3 @@ d2E/dq0dQ2:
  [-0.03275448  0.06589891]]
 d2E/dq0^2: 0.1237
 ```
-
-<!-- END GENERATED: getting-started -->
