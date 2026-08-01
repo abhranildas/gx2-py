@@ -19,8 +19,10 @@ Pass --no-execute to skip re-running the notebook and just re-export from
 whatever outputs are currently saved in it (faster, for iterating on this
 script's formatting).
 
-CI (.github/workflows/publish.yml) also runs this on every release, so the
-published README/images always reflect a fresh run of the notebook.
+CI (.github/workflows/regen-docs.yml) also runs this with --no-execute on
+every push to main that touches GettingStarted.ipynb, syncing README/images
+from whatever outputs are already saved in the notebook -- it does not
+re-execute it, so a fresh run before release is still on you.
 """
 from __future__ import annotations
 
@@ -32,7 +34,6 @@ import sys
 from pathlib import Path
 
 import nbformat
-from nbclient import NotebookClient
 
 REPO = Path(__file__).resolve().parent.parent
 NOTEBOOK_PATH = REPO / "GettingStarted.ipynb"
@@ -110,6 +111,8 @@ def execute_notebook(nb):
     dropped again before returning) so plots are captured as image/png
     outputs no matter what backend the kernel would otherwise default to.
     """
+    from nbclient import NotebookClient
+
     exec_nb = copy.deepcopy(nb)
     exec_nb.cells.insert(0, nbformat.v4.new_code_cell(MATPLOTLIB_SETUP))
     client = NotebookClient(
