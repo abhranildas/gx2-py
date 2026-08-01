@@ -118,7 +118,7 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
           idx=None, nx=0, precision="basic", AbsTol=1e-10, RelTol=1e-6):
     """Imhof-Davies method for the cdf/pdf of a generalized chi-square, and
     for the exact (non-finite-differenced) parameter-derivative integrands
-    used by ``cdf_grad_gx2``/``cdf_grad_norm_quad`` -- see :func:`imhof_integrand`
+    used by ``cdf_grad_gx2``/``cdf_grad_bd`` -- see :func:`imhof_integrand`
     for the ``output`` modes."""
     w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)

@@ -48,11 +48,12 @@ def gx2_to_norm_quad_params(w, k, l, s, m):
     return {"q2": np.diag(q2), "q1": q1.astype(float), "q0": float(np.dot(w, l) + m)}
 
 
-def opt_norm_quad_bd(mu0, v0, mu1, v1, p0=0.5, p1=0.5):
+def norm_class_opt_bd(mu0, v0, mu1, v1, p0=0.5, p1=0.5):
     """Optimal (Bayes) quadratic boundary ``q(x) = x' q2 x + q1' x + q0 = 0``
-    between two normal classes, with class 1 favored where ``q(x) > 0``.
-    Matches ``IntClassNorm``'s ``opt_class_quad.m`` (class 1 <-> ``norm_1``,
-    class 0 <-> ``norm_2``).
+    between two normal classes, with class 0 favored where ``q(x) > 0``.
+    Matches ``IntClassNorm``'s ``norm_class_opt_bd.m`` directly, argument for
+    argument (class 0 <-> ``norm_1``, class 1 <-> ``norm_2``) -- unlike the
+    old ``opt_norm_quad_bd`` this replaces, which had those two reversed.
 
     Parameters
     ----------
@@ -67,7 +68,7 @@ def opt_norm_quad_bd(mu0, v0, mu1, v1, p0=0.5, p1=0.5):
     -------
     quad : dict
         ``{'q2': matrix, 'q1': vector, 'q0': scalar}``, for use with
-        :func:`norm_err` and :func:`cdf_grad_norm_quad`.
+        :func:`norm_err` and :func:`cdf_grad_bd`.
     """
     mu0 = np.atleast_1d(np.asarray(mu0, dtype=float))
     mu1 = np.atleast_1d(np.asarray(mu1, dtype=float))
@@ -75,11 +76,11 @@ def opt_norm_quad_bd(mu0, v0, mu1, v1, p0=0.5, p1=0.5):
     v1 = np.atleast_2d(np.asarray(v1, dtype=float))
     v0inv = np.linalg.inv(v0)
     v1inv = np.linalg.inv(v1)
-    q2 = 0.5 * (v0inv - v1inv)
-    q1 = v1inv @ mu1 - v0inv @ mu0
-    q0 = (0.5 * (mu0 @ v0inv @ mu0 - mu1 @ v1inv @ mu1)
-          + 0.5 * (np.linalg.slogdet(v0)[1] - np.linalg.slogdet(v1)[1])
-          + np.log(p1 / p0))
+    q2 = 0.5 * (v1inv - v0inv)
+    q1 = v0inv @ mu0 - v1inv @ mu1
+    q0 = (0.5 * (mu1 @ v1inv @ mu1 - mu0 @ v0inv @ mu0)
+          + 0.5 * (np.linalg.slogdet(v1)[1] - np.linalg.slogdet(v0)[1])
+          + np.log(p0 / p1))
     return {"q2": q2, "q1": q1, "q0": float(q0)}
 
 
@@ -101,7 +102,7 @@ def norm_quad_to_gx2_params(mu, v, quad, merge=True, return_aux=False):
         raw exact components.
     return_aux : bool, optional
         If True, also return the eigen-structure of the standardized
-        quadratic (see Returns), reused by ``cdf_grad_norm_quad`` so it need not
+        quadratic (see Returns), reused by ``cdf_grad_bd`` so it need not
         redo the eigendecomposition.
 
     Returns

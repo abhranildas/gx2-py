@@ -162,7 +162,7 @@ PROBLEMS = [
 
     # D=2, hyperbolic: the density-cusp case -- the boundary lands exactly on
     # the mixed-sign, k=1 offset m (see gx2_derivatives.md open item 3.3/§1.5
-    # and the cusp handling in cdf_grad_norm_quad/norm_err).
+    # and the cusp handling in cdf_grad_bd/norm_err).
     dict(name="9_D2_generic_crossed", mu0=[.3, -.3], v0=[[0.5, 0], [0, 2.0]],
          mu1=[-.3, .3], v1=[[2.0, 0], [0, 0.5]]),
 
@@ -238,7 +238,7 @@ P0 = P1 = 0.5  # equal priors throughout
 
 # ---------------------------------------------------------------------------
 # The Fisher (linear discriminant) boundary: the same Bayes-boundary formula
-# as gx2.opt_norm_quad_bd, but with both classes' covariances replaced by their
+# as gx2.norm_class_opt_bd, but with both classes' covariances replaced by their
 # prior-weighted pooled covariance p0*v0+p1*v1 -- the population analogue of
 # a sample-size-weighted pooled covariance, consistent with how p0/p1 weight
 # everything else in this script. Both covariances being equal collapses q2
@@ -258,15 +258,15 @@ def fisher_boundary(mu0, v0, mu1, v1, p0=P0, p1=P1):
     v1 = np.atleast_2d(np.asarray(v1, dtype=float))
     vp_inv = np.linalg.inv(p0 * v0 + p1 * v1)
     D = mu0.size
-    q1 = vp_inv @ (mu1 - mu0)
-    q0 = 0.5 * (mu0 @ vp_inv @ mu0 - mu1 @ vp_inv @ mu1) + np.log(p1 / p0)
+    q1 = vp_inv @ (mu0 - mu1)
+    q0 = 0.5 * (mu1 @ vp_inv @ mu1 - mu0 @ vp_inv @ mu0) + np.log(p0 / p1)
     return {"q2": np.zeros((D, D)), "q1": q1, "q0": float(q0)}
 
 
 # ---------------------------------------------------------------------------
 # Flattening: theta = [vech(Q2) (upper triangle incl. diagonal, row-major),
 # q1, q0]. unflatten's off-diagonal entries mirror both (a,b) and (b,a)
-# together, matching cdf_grad_norm_quad's symmetric-perturbation convention
+# together, matching cdf_grad_bd's symmetric-perturbation convention
 # for the gradient/Hessian -- verified against finite differences of a plain
 # cdf() call before use here (see gx2_derivatives.md's wider-benchmark
 # writeup for the cross-check).
@@ -320,7 +320,7 @@ def flatten_dir(i, D):
 
 
 def grad_flat(grad, D):
-    """Flatten a cdf_grad_norm_quad-style gradient dict to the theta basis."""
+    """Flatten a cdf_grad_bd-style gradient dict to the theta basis."""
     out = np.zeros(n_params(D))
     idx = 0
     for r in range(D):
@@ -384,7 +384,7 @@ def _hess_dir(hess, dq2a, dq1a, dq0a, dq2b, dq1b, dq0b):
 
 
 def hess_flat(hess, D):
-    """Flatten a cdf_grad_norm_quad-style Hessian dict to the theta basis."""
+    """Flatten a cdf_grad_bd-style Hessian dict to the theta basis."""
     P = n_params(D)
     dirs = [flatten_dir(i, D) for i in range(P)]
     H = np.zeros((P, P))
@@ -673,7 +673,7 @@ def _run_problem(problem, outdir):
     log(f"starting, D={D}, P={P}")
 
     try:
-        quad = gx2.opt_norm_quad_bd(mu0, v0, mu1, v1, p0=p0, p1=p1)
+        quad = gx2.norm_class_opt_bd(mu0, v0, mu1, v1, p0=p0, p1=p1)
         theta0 = flatten(quad, D)
         quad_fisher = fisher_boundary(mu0, v0, mu1, v1, p0=p0, p1=p1)
         theta0_fisher = flatten(quad_fisher, D)

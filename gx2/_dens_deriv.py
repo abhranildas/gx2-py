@@ -15,7 +15,7 @@ def dens_deriv(x, w, k, l, s, m, nx, AbsTol=1e-10, RelTol=1e-6,
 
     Single entry point for the density x-derivatives f', f'', f''' used by
     the gradient/Hessian routines (:func:`gx2.cdf_grad_gx2`,
-    :func:`gx2.cdf_grad_norm_quad`). It picks between two exact methods:
+    :func:`gx2.cdf_grad_bd`). It picks between two exact methods:
 
     - the Gil-Pelaez (Imhof) t-weighted inversion, used whenever it
       converges comfortably: ``s != 0`` (Gaussian damping), or ``s == 0``

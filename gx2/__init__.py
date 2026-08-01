@@ -25,12 +25,12 @@ If you use this code, please cite:
 """
 
 from ._basic import stat, char, rnd
-from ._convert import gx2_to_norm_quad_params, norm_quad_to_gx2_params, opt_norm_quad_bd
+from ._convert import gx2_to_norm_quad_params, norm_quad_to_gx2_params, norm_class_opt_bd
 from ._distribution import cdf, pdf, inv, log_cdf
 from ._methods import (imhof, imhof_integrand, ruben, ifft,
                        pearson, tail, ellipse)
 from ._dens_deriv import dens_deriv
-from ._gradients import cdf_grad_gx2, cdf_grad_norm_quad, norm_err
+from ._gradients import cdf_grad_gx2, cdf_grad_bd, norm_err
 from ._ray import (cdf_ray, pdf_ray, ray_integrand, int_norm_ray,
                    norm_prob_across_rays, norm_prob_across_angles)
 from ._helpers import (log_sum_exp, signed_log_sum_exp, phi_ray,
@@ -47,12 +47,12 @@ __all__ = [
     # core distribution API
     "stat", "char", "rnd", "cdf", "pdf", "inv", "log_cdf",
     # parameter conversions
-    "gx2_to_norm_quad_params", "norm_quad_to_gx2_params", "opt_norm_quad_bd",
+    "gx2_to_norm_quad_params", "norm_quad_to_gx2_params", "norm_class_opt_bd",
     # individual methods
     "imhof", "imhof_integrand", "ruben", "ifft", "pearson",
     "tail", "ellipse",
     # exact (non-finite-differenced) derivatives
-    "dens_deriv", "cdf_grad_gx2", "cdf_grad_norm_quad", "norm_err",
+    "dens_deriv", "cdf_grad_gx2", "cdf_grad_bd", "norm_err",
     # ray method internals
     "cdf_ray", "pdf_ray", "ray_integrand", "int_norm_ray",
     "norm_prob_across_rays", "norm_prob_across_angles",

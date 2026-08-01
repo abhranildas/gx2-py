@@ -1,7 +1,7 @@
 """Exact (non-finite-differenced) gradient and Hessian of the generalized
 chi-square cdf, with respect to its native parameters and to the quadratic
 boundary coefficients of a normal classifier. Mirrors ``cdf_grad_gx2.m`` and
-``cdf_grad_norm_quad.m``.
+``cdf_grad_bd.m``.
 """
 
 import numpy as np
@@ -255,14 +255,14 @@ def _cusp_probe_merge(vals):
 
 def _boundary_raw(x, mu, v, quad, wrt, hess, AbsTol=1e-10, RelTol=1e-6,
                    precision="basic", n_ruben=1000):
-    """Shared machinery behind :func:`cdf_grad_norm_quad` and
+    """Shared machinery behind :func:`cdf_grad_bd` and
     :func:`norm_err_grad_bd`: one class's raw (pre-cusp-resolution,
     pre-squeeze, trailing-``nx``) gradient/Hessian blocks for
     ``F(x0)=P(q(x)<=x0)``, plus everything needed to resolve a cusp there --
     the ``at_cusp`` mask, its scale, and a probe callable
     ``inversion_grad_hess(s_eff, want_hess)`` giving the ``s!=0`` inversion
     route's grad/Hessian at an arbitrary artificial normal term.
-    :func:`cdf_grad_norm_quad` resolves the cusp on this class alone;
+    :func:`cdf_grad_bd` resolves the cusp on this class alone;
     :func:`norm_err_grad_bd` instead combines two classes' raw output and
     inversion probes *before* resolving, since resolving each class's
     infinity independently and then subtracting can throw away a genuine
@@ -274,8 +274,8 @@ def _boundary_raw(x, mu, v, quad, wrt, hess, AbsTol=1e-10, RelTol=1e-6,
     """
     if precision != "basic":
         raise NotImplementedError(
-            "cdf_grad_norm_quad only supports precision='basic'; the 'vpa' "
-            "path from cdf_grad_norm_quad.m has not been ported.")
+            "cdf_grad_bd only supports precision='basic'; the 'vpa' "
+            "path from cdf_grad_bd.m has not been ported.")
 
     if wrt is None:
         wrt = _BOUNDARY_GROUPS
@@ -558,7 +558,7 @@ def _resolve_cusp_terms(raw_grad, raw_hess, at_cusp, inversion_grad_hess, cusp_s
     ``inversion_grad_hess(s_eff, want_hess)`` is the probe: the (always
     valid, cusp-independent) ``s!=0`` inversion route at a shrinking
     sequence of artificial normal terms, in the same raw shape as
-    ``raw_grad``/``raw_hess``. :func:`cdf_grad_norm_quad` passes a
+    ``raw_grad``/``raw_hess``. :func:`cdf_grad_bd` passes a
     single class's own probe; :func:`norm_err_grad_bd` passes the *combined*
     ``p1*F1-p0*F0`` probe instead, so that a real cancellation between the
     two classes' divergences shows up as convergence here rather than being
@@ -586,7 +586,7 @@ def _resolve_cusp_terms(raw_grad, raw_hess, at_cusp, inversion_grad_hess, cusp_s
 
 def _finalize_grad_hess(raw_grad, raw_hess, hess, nx):
     """Squeeze raw (trailing-``nx``) grad/Hessian dicts into the public
-    ``cdf_grad_norm_quad``/``norm_err_grad_bd`` return shapes."""
+    ``cdf_grad_bd``/``norm_err_grad_bd`` return shapes."""
     grad = {}
     if "q0" in raw_grad:
         g0 = raw_grad["q0"]
@@ -607,7 +607,7 @@ def _finalize_grad_hess(raw_grad, raw_hess, hess, nx):
     return grad, hessian
 
 
-def cdf_grad_norm_quad(x, mu, v, quad, wrt=None, hess=False,
+def cdf_grad_bd(x, mu, v, quad, wrt=None, hess=False,
                     AbsTol=1e-10, RelTol=1e-6, precision="basic", n_ruben=1000):
     """Gradient (and optionally the Hessian) of the cdf of a quadratic form
     ``q(x) = x' q2 x + q1' x + q0`` of a normal vector ``x ~ N(mu, v)``, with
@@ -680,24 +680,29 @@ def norm_err(mu0, v0, mu1, v1, quad, p0=0.5, p1=0.5, wrt=None, grad=False, hess=
     between two normal classes, with its gradient and Hessian with respect
     to the boundary coefficients available as optional additional outputs.
 
-    The error is ``E = p0*P(q(x)>0 | x~N(mu0,v0)) + p1*P(q(x)<=0 | x~N(mu1,v1))``,
+    The error is ``E = p0*P(q(x)<=0 | x~N(mu0,v0)) + p1*P(q(x)>0 | x~N(mu1,v1))``,
     i.e. class 0 mass on the class-1 side of the boundary plus class 1 mass
     on the class-0 side; since ``P(q(x)>0)=1-F(0)``, this is
-    ``p0*(1-F0(0)) + p1*F1(0)`` for the two classes' cdfs of ``q(x)``. The
+    ``p0*F0(0) + p1*(1-F1(0))`` for the two classes' cdfs of ``q(x)``. The
     gradient/Hessian, when requested, are the analogous signed combination
-    of the two classes' :func:`cdf_grad_norm_quad` outputs at ``x0=0``:
-    ``dE = p1*dF1 - p0*dF0``, and likewise block by block for the Hessian.
+    of the two classes' :func:`cdf_grad_bd` outputs at ``x0=0``:
+    ``dE = p0*dF0 - p1*dF1``, and likewise block by block for the Hessian.
+    (This is the mirror image of the convention used before
+    :func:`norm_class_opt_bd` replaced ``opt_norm_quad_bd``: ``q(x)>0`` now
+    favors class 0 rather than class 1, to match ``IntClassNorm``'s
+    ``norm_class_opt_bd.m`` directly instead of with its two classes
+    reversed -- see that function's docstring.)
 
     If the shared boundary lands exactly on one class's density cusp (see
-    :func:`cdf_grad_norm_quad`), it generically lands on both classes' cusps
+    :func:`cdf_grad_bd`), it generically lands on both classes' cusps
     at once (the two ``F``'s share the same boundary coefficients), and
     resolving each class's divergence independently before subtracting can
     turn a genuine ``inf - inf`` cancellation into ``nan`` -- the two
     classes' divergences may be mirror images that cancel in the combined
     error even though neither class's own Hessian is finite there. So this
     cusp is resolved on the *combined* gradient/Hessian directly: the same
-    shrinking-probe test as :func:`cdf_grad_norm_quad`, applied to
-    ``p1*F1 - p0*F0`` as a whole rather than to each class alone. (The error
+    shrinking-probe test as :func:`cdf_grad_bd`, applied to
+    ``p0*F0 - p1*F1`` as a whole rather than to each class alone. (The error
     value ``E`` itself is a plain cdf evaluation and never hits this cusp --
     only its derivatives can diverge there.)
 
@@ -721,7 +726,7 @@ def norm_err(mu0, v0, mu1, v1, quad, p0=0.5, p1=0.5, wrt=None, grad=False, hess=
         Hessian is never computed without the gradient, since the gradient
         falls out of the same computation for free). Default False.
     wrt, **kwargs
-        Forwarded to :func:`cdf_grad_norm_quad` for each class; only used
+        Forwarded to :func:`cdf_grad_bd` for each class; only used
         when ``grad`` or ``hess`` is True.
 
     Returns
@@ -730,19 +735,19 @@ def norm_err(mu0, v0, mu1, v1, quad, p0=0.5, p1=0.5, wrt=None, grad=False, hess=
         The classification error ``E``. Always returned.
     grad : dict, optional
         Only if ``grad=True`` or ``hess=True``. Gradient of ``E``, same keys
-        as :func:`cdf_grad_norm_quad`'s gradient.
+        as :func:`cdf_grad_bd`'s gradient.
     hessian : dict, optional
-        Only if ``hess=True``. Same keys as :func:`cdf_grad_norm_quad`'s Hessian.
+        Only if ``hess=True``. Same keys as :func:`cdf_grad_bd`'s Hessian.
 
     See Also
     --------
-    cdf_grad_norm_quad
+    cdf_grad_bd
     """
     w0, k0, l0, s0, m0 = norm_quad_to_gx2_params(mu0, v0, quad)
     w1, k1, l1, s1, m1 = norm_quad_to_gx2_params(mu1, v1, quad)
     F0 = float(cdf(0, w0, k0, l0, s0, m0))
     F1 = float(cdf(0, w1, k1, l1, s1, m1))
-    err = p0 * (1 - F0) + p1 * F1
+    err = p0 * F0 + p1 * (1 - F1)
 
     if not grad and not hess:
         return err
@@ -750,10 +755,10 @@ def norm_err(mu0, v0, mu1, v1, quad, p0=0.5, p1=0.5, wrt=None, grad=False, hess=
     g0, h0, at_cusp0, scale0, inv0, nx = _boundary_raw(0, mu0, v0, quad, wrt, hess, **kwargs)
     g1, h1, at_cusp1, scale1, inv1, nx = _boundary_raw(0, mu1, v1, quad, wrt, hess, **kwargs)
 
-    raw_grad = {key: p1 * g1[key] - p0 * g0[key] for key in g1}
+    raw_grad = {key: p0 * g0[key] - p1 * g1[key] for key in g0}
     raw_hess = None
     if hess:
-        raw_hess = {key: p1 * h1[key] - p0 * h0[key] for key in h1}
+        raw_hess = {key: p0 * h0[key] - p1 * h1[key] for key in h0}
 
     at_cusp = at_cusp0 | at_cusp1
     if np.any(at_cusp):
@@ -762,8 +767,8 @@ def norm_err(mu0, v0, mu1, v1, quad, p0=0.5, p1=0.5, wrt=None, grad=False, hess=
         def inversion_grad_hess(s_eff, want_hess):
             cg0, ch0 = inv0(s_eff, want_hess)
             cg1, ch1 = inv1(s_eff, want_hess)
-            cg = {key: p1 * cg1[key] - p0 * cg0[key] for key in cg1}
-            ch = None if not want_hess else {key: p1 * ch1[key] - p0 * ch0[key] for key in ch1}
+            cg = {key: p0 * cg0[key] - p1 * cg1[key] for key in cg0}
+            ch = None if not want_hess else {key: p0 * ch0[key] - p1 * ch1[key] for key in ch0}
             return cg, ch
 
         raw_grad, raw_hess = _resolve_cusp_terms(raw_grad, raw_hess, at_cusp, inversion_grad_hess, cusp_scale)

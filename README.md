@@ -46,23 +46,24 @@ in the getting-started notebook.
 
 | function | purpose |
 |----------|---------|
-| `gx2_to_norm_quad_params(w, k, l, s, m)` | native gx2 parameters → quadratic-form parameters of a standard normal |
-| `norm_quad_to_gx2_params(mu, v, quad, merge=)` | normal and quadratic-form parameters → native gx2 parameters |
-| `stat(w, k, l, s, m)` | mean, variance, and mode of a gx2 distribution |
+| `norm_err(mu0, v0, mu1, v1, quad, p0=, p1=, grad=, hess=, ...)` | total classification error between two normal classes separated by a quadratic boundary (and optionally its gradient/Hessian wrt the boundary coefficients `q2, q1, q0`) |
+| `gx2_to_norm_quad_params(w, k, l, s, m)` | gx2 → quadratic-form coefficients of a standard normal |
+| `norm_quad_to_gx2_params(mu, v, quad, merge=)` | quadratic form of a normal → gx2 parameters |
+| `stat(w, k, l, s, m)` | mean and variance |
 | `rnd(w, k, l, s, m, size=, method=)` | random numbers |
 | `char(t, w, k, l, s, m)` | characteristic function |
 | `cdf(x, w, k, l, s, m, side=, method=, ...)` | cdf |
 | `pdf(x, w, k, l, s, m, side=, method=, ...)` | pdf |
 | `inv(p, w, k, l, s, m, side=, method=, ...)` | inverse cdf |
-| `norm_err(mu0, v0, mu1, v1, quad, p0=, p1=, grad=, hess=, ...)` | classification error between two normal classes separated by the optimal quadratic boundary, and optionally its gradient/Hessian wrt the boundary coefficients `q2, q1, q0` |
-| `cdf_grad_gx2(x, w, k, l, s, m, wrt=, hess=, ...)` | exact (not finite-differenced) gradient and Hessian of the cdf wrt the native parameters `w, k, l, s, m` |
-| `cdf_grad_norm_quad(x, mu, v, quad, wrt=, hess=, ...)` | exact gradient and Hessian of the cdf wrt the quadratic boundary coefficients `q2, q1, q0` |
-| `opt_norm_quad_bd(mu0, v0, mu1, v1, p0=, p1=)` | optimal (Bayes) quadratic boundary between two normal classes, for use with `norm_err`/`cdf_grad_norm_quad` |
+| `cdf_grad_gx2(x, w, k, l, s, m, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the native parameters `w, k, l, s, m` |
+| `cdf_grad_bd(x, mu, v, quad, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the quadratic boundary coefficients `q2, q1, q0` |
+| `norm_class_opt_bd(mu0, v0, mu1, v1, p0=, p1=)` | optimal (Bayes) quadratic boundary between two normal classes, for use with `norm_err`/`cdf_grad_bd` |
 
 For full documentation of any function, use Python's `help` (or `?` in
 Jupyter), e.g.:
 
 ```python
+help(gx2.norm_err)
 help(gx2.gx2_to_norm_quad_params)
 help(gx2.norm_quad_to_gx2_params)
 help(gx2.stat)
@@ -71,10 +72,9 @@ help(gx2.char)
 help(gx2.cdf)
 help(gx2.pdf)
 help(gx2.inv)
-help(gx2.norm_err)
 help(gx2.cdf_grad_gx2)
-help(gx2.cdf_grad_norm_quad)
-help(gx2.opt_norm_quad_bd)
+help(gx2.cdf_grad_bd)
+help(gx2.norm_class_opt_bd)
 ```
 
 ## Computation methods for `cdf` / `pdf`
@@ -275,9 +275,9 @@ print("p (upper) =", gx2.cdf(x_q, w, k, l, s, m, side='upper', method='ray', n_r
 ```
 ```
 x_q = [-24365.14269438 -47950.03867407]
-p = [-1006.24736289 -2014.43928422]
+p = [-1005.60637077 -2013.10432742]
 x_q (upper) = [ 9723.84451406 19159.3719629 ]
-p (upper) = [ -999.44410366 -2000.06198604]
+p (upper) = [-1000.10989116 -2000.13689531]
 ```
 
 #### An elliptic distribution
@@ -633,7 +633,7 @@ v = np.array([[2, 1], [1, 3]])
 quad = {'q2': np.array([[1, 1], [1, 1]]), 'q1': np.array([-1, 0]), 'q0': -1}
 x0 = 0
 
-grad, hess = gx2.cdf_grad_norm_quad(x0, mu, v, quad, hess=True)
+grad, hess = gx2.cdf_grad_bd(x0, mu, v, quad, hess=True)
 print("dF/dQ2:\n", grad['q2'])
 print("dF/dq1:", grad['q1'])
 print(f"dF/dq0: {grad['q0']:.4f}")
@@ -689,8 +689,8 @@ mu1, v1 = np.array([.3, .3]), np.array([[.4, 0.], [0., .6]])
 p0 = p1 = 0.5
 
 # The optimal (Bayes) quadratic boundary q(x) = x'Q2 x + q1'x + q0 = 0
-# between two normals (class 1 favored where q(x)>0)
-quad = gx2.opt_norm_quad_bd(mu0, v0, mu1, v1, p0=p0, p1=p1)
+# between two normals (class 0 favored where q(x)>0)
+quad = gx2.norm_class_opt_bd(mu0, v0, mu1, v1, p0=p0, p1=p1)
 
 def q(x, quad):
     return (np.einsum('i...,ij,j...->...', x, quad['q2'], x)
@@ -740,10 +740,10 @@ print(f"d2E/dq0^2: {hess['q0q0']:.4f}")
 ```
 classification error at the optimal boundary: 0.2776
 dE/dQ2 (~0):
- [[-1.38777878e-17  6.24500451e-17]
- [ 6.24500451e-17 -2.77555756e-17]]
-dE/dq1 (~0): [-5.03069808e-17 -2.77555756e-17]
-dE/dq0 (~0): -1.39e-17
+ [[ 1.38777878e-17 -6.24500451e-17]
+ [-6.24500451e-17  2.77555756e-17]]
+dE/dq1 (~0): [5.03069808e-17 2.77555756e-17]
+dE/dq0 (~0): 1.39e-17
 
 Hessian blocks of the error wrt the boundary coefficients:
 d2E/dQ2^2:
