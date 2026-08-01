@@ -39,14 +39,6 @@ pip install gx2
 Requires `numpy`, `scipy` and `mpmath`. `matplotlib` is optional, for plotting
 in the getting-started notebook.
 
-To install from a local clone instead:
-
-```bash
-pip install .
-# or, for development (editable install with test/plot extras):
-pip install -e ".[plot,test]"
-```
-
 ## Public functions
 
 | function | purpose |
