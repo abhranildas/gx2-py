@@ -234,22 +234,43 @@ _CUSP_REL_TOL = 1e-8
 _CUSP_PROBE_FACTORS = (1e-2, 1e-3, 1e-4)
 
 
-def _cusp_probe_merge(vals):
+# Absolute floor (relative to cusp_scale) below which a probe sequence is
+# trusted as converged regardless of the relative decade-over-decade test
+# below. That test only looks at *relative* change, which is ill-conditioned
+# when a component's true value is exactly (or extremely close to) zero --
+# which happens whenever the boundary passed in is itself already the
+# Bayes-optimal one, since the classification error's gradient vanishes
+# there identically (confirmed directly: gx2_derivatives.md's problem 9
+# uses a boundary that reduces to the true optimum, and its Q2 off-diagonal
+# and q0 gradient entries are pure floating-point noise at every probe
+# scale, down to 1e-17 -- yet without this floor that noise occasionally
+# mimics a genuine divergence's signature and gets stamped +-inf instead of
+# ~0). A real divergence is already well clear of this floor at even the
+# largest (least-refined) probe (see the comment on _CUSP_PROBE_FACTORS),
+# so this floor can only rescue a false positive, never mask a real one.
+_CUSP_ZERO_FLOOR = 1e-6
+
+
+def _cusp_probe_merge(vals, cusp_scale):
     """vals: 3 arrays (same shape), evaluated at a shrinking sequence of
     tiny artificial normal-term probes s (largest first). Elementwise: if
     the value has converged (its most recent decade-over-decade change
-    shrank to well under the one before), trust the smallest-s value;
-    otherwise the term is genuinely unbounded (confirmed directly for the
-    term that exposed this: its damped value grew by an almost exactly
-    constant amount every time the probe s shrank by 10x, over six full
-    decades -- the signature of an unbounded logarithmic divergence, not a
-    slow-converging finite limit) and the correctly-signed infinity is
-    returned instead of an arbitrary finite number.
+    shrank to well under the one before, or all three probes already sit
+    below the noise floor ``_CUSP_ZERO_FLOOR*cusp_scale``), trust the
+    smallest-s value; otherwise the term is genuinely unbounded (confirmed
+    directly for the term that exposed this: its damped value grew by an
+    almost exactly constant amount every time the probe s shrank by 10x,
+    over six full decades -- the signature of an unbounded logarithmic
+    divergence, not a slow-converging finite limit) and the correctly-signed
+    infinity is returned instead of an arbitrary finite number.
     """
     v0, v1, v2 = vals
     d1, d2 = v1 - v0, v2 - v1
+    floor = _CUSP_ZERO_FLOOR * cusp_scale
     with np.errstate(invalid="ignore"):
         converging = (d1 == 0) | (np.abs(d2) < 0.5 * np.abs(d1))
+        all_below_floor = (np.abs(v0) < floor) & (np.abs(v1) < floor) & (np.abs(v2) < floor)
+        converging = converging | all_below_floor
     return np.where(converging, v2, np.where(d2 > 0, np.inf, -np.inf))
 
 
@@ -573,13 +594,13 @@ def _resolve_cusp_terms(raw_grad, raw_hess, at_cusp, inversion_grad_hess, cusp_s
             probes_h.append(h_p)
     resolved_grad = dict(raw_grad)
     for key in raw_grad:
-        merged = _cusp_probe_merge([p[key] for p in probes_g])
+        merged = _cusp_probe_merge([p[key] for p in probes_g], cusp_scale)
         resolved_grad[key] = np.where(at_cusp, merged, raw_grad[key])
     if raw_hess is None:
         return resolved_grad, None
     resolved_hess = dict(raw_hess)
     for key in raw_hess:
-        merged = _cusp_probe_merge([p[key] for p in probes_h])
+        merged = _cusp_probe_merge([p[key] for p in probes_h], cusp_scale)
         resolved_hess[key] = np.where(at_cusp, merged, raw_hess[key])
     return resolved_grad, resolved_hess
 

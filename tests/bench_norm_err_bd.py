@@ -10,24 +10,28 @@ w.r.t. that boundary's coefficients (q2,q1,q0) there:
   - finite differences via ``numdifftools`` (Richardson-extrapolated).
 (The gradient is also recorded at this boundary, but it's identically ~0
 there -- it's the error minimizer -- so it's not a useful accuracy
-benchmark on its own; see the Fisher-boundary gradient test below for one
+benchmark on its own; see the naive-QDA-boundary gradient test below for one
 that is.) Some problems are deliberately included *because* one or both
 methods may be slow there (mixed-sign, higher-dimension boundaries) -- the
 point of this benchmark is partly to demonstrate exactly that contrast, not
 to avoid it.
 
 Each problem also gets the same tight/default/FD comparison for the plain
-*gradient* (no Hessian) at a second, deliberately non-optimal boundary: the
-Fisher boundary, i.e. the linear discriminant obtained by replacing both
-classes' true covariances with their pooled covariance (see
-``fisher_boundary``). Because that boundary isn't optimal for the real
-(unequal-covariance) problem, the error's gradient there is generically
+*gradient* (no Hessian) at a second, deliberately non-optimal boundary: a
+naive-QDA boundary, i.e. the same quadratic-discriminant formula as the
+optimal boundary above, but with each class's covariance replaced by its own
+diagonal (see ``naive_qda_boundary``). Unlike a Fisher/LDA boundary (which
+collapses Q2 to exactly zero), this keeps a genuinely nonzero, generically
+mixed-sign quadratic term, so it exercises the same non-degenerate gx2
+machinery (Ruben/Imhof, cross-component derivatives) as the optimal-boundary
+Hessian test -- while still being deliberately non-optimal for the real
+(fully correlated) problem, so the error's gradient there is generically
 nonzero, which is exactly what the optimal-boundary Hessian test's own
 gradient can't offer.
 
 Every one of a problem's stages (4 for the optimal-boundary Hessian test, 3
-for the Fisher-boundary gradient test -- ground truth, default-tol, FD; no FD
-Hessian is computed there) runs in its own subprocess, with no wall-clock cap:
+for the naive-QDA-boundary gradient test -- ground truth, default-tol, FD; no
+FD Hessian is computed there) runs in its own subprocess, with no wall-clock cap:
 a stage runs to completion however long it needs (some of these, by design,
 take hours -- see below), rather than being killed on a timeout. The
 subprocess boundary here is only for per-stage warning capture (see
@@ -237,30 +241,31 @@ PROBLEMS = [
 P0 = P1 = 0.5  # equal priors throughout
 
 # ---------------------------------------------------------------------------
-# The Fisher (linear discriminant) boundary: the same Bayes-boundary formula
-# as gx2.norm_class_opt_bd, but with both classes' covariances replaced by their
-# prior-weighted pooled covariance p0*v0+p1*v1 -- the population analogue of
-# a sample-size-weighted pooled covariance, consistent with how p0/p1 weight
-# everything else in this script. Both covariances being equal collapses q2
-# to exactly the zero matrix, so this boundary is purely linear.
-#
-# It is deliberately *not* the optimal boundary for the true, unequal-
-# covariance problem, so evaluating the real classification error's gradient
-# there (using each class's true v0/v1, not the pooled one) generically
-# gives a nonzero vector -- unlike at the optimum, where the gradient is
-# ~0 by construction and so useless as an accuracy benchmark. This is the
-# boundary the fisher_* stages below use for that reason.
+# The naive-QDA boundary: the same quadratic-discriminant formula as
+# gx2.norm_class_opt_bd, but with each class's covariance replaced by its own
+# diagonal (i.e. ignoring cross-feature correlations). Unlike a Fisher/LDA
+# boundary this keeps a genuinely nonzero, generically mixed-sign quadratic
+# term Q2 -- so it exercises the same non-degenerate gx2 machinery
+# (Ruben/Imhof, cross-component derivatives) as the optimal-boundary Hessian
+# test -- while still being deliberately non-optimal for the true (fully
+# correlated) problem, so the classification error's gradient there is
+# generically nonzero, unlike at the true optimum, where it is ~0 by
+# construction and so useless as an accuracy benchmark. This is the boundary
+# the naive_qda_* stages below use for that reason.
 # ---------------------------------------------------------------------------
-def fisher_boundary(mu0, v0, mu1, v1, p0=P0, p1=P1):
+def naive_qda_boundary(mu0, v0, mu1, v1, p0=P0, p1=P1):
     mu0 = np.atleast_1d(np.asarray(mu0, dtype=float))
     mu1 = np.atleast_1d(np.asarray(mu1, dtype=float))
     v0 = np.atleast_2d(np.asarray(v0, dtype=float))
     v1 = np.atleast_2d(np.asarray(v1, dtype=float))
-    vp_inv = np.linalg.inv(p0 * v0 + p1 * v1)
-    D = mu0.size
-    q1 = vp_inv @ (mu0 - mu1)
-    q0 = 0.5 * (mu1 @ vp_inv @ mu1 - mu0 @ vp_inv @ mu0) + np.log(p0 / p1)
-    return {"q2": np.zeros((D, D)), "q1": q1, "q0": float(q0)}
+    dv0 = np.diag(v0)
+    dv1 = np.diag(v1)
+    q2 = np.diag(0.5 * (1.0 / dv1 - 1.0 / dv0))
+    q1 = mu0 / dv0 - mu1 / dv1
+    q0 = (0.5 * (np.sum(mu1 ** 2 / dv1) - np.sum(mu0 ** 2 / dv0))
+          + 0.5 * (np.sum(np.log(dv1)) - np.sum(np.log(dv0)))
+          + np.log(p0 / p1))
+    return {"q2": q2, "q1": q1, "q0": float(q0)}
 
 
 # ---------------------------------------------------------------------------
@@ -496,9 +501,9 @@ def _store_stage_result(entry, stage, status, value, elapsed, D):
     """Store one stage's raw (flattened) output into entry, in place. The
     4 optimal-boundary Hessian-test stages keep their original top-level
     field names (ground_truth/default_tol/fd_grad/fd_hess); the 3
-    Fisher-boundary gradient-test stages nest under entry["fisher"] instead,
-    keyed by the same ground_truth/default_tol/fd_grad names, so the two
-    tests never collide despite sharing a stage-naming convention."""
+    naive-QDA-boundary gradient-test stages nest under entry["naive_qda"]
+    instead, keyed by the same ground_truth/default_tol/fd_grad names, so the
+    two tests never collide despite sharing a stage-naming convention."""
     if stage == "ground_truth":
         if status == "ok":
             err_gt, grad_gt, hess_gt = value
@@ -535,32 +540,32 @@ def _store_stage_result(entry, stage, status, value, elapsed, D):
                                                          "Hessian -- verified directly, not assumed)"))
         else:
             entry["fd_hess"] = dict(status=status, time_s=elapsed, detail=str(value))
-    elif stage in ("fisher_ground_truth", "fisher_default_tol"):
-        fkey = "ground_truth" if stage == "fisher_ground_truth" else "default_tol"
-        fisher = entry.setdefault("fisher", {})
+    elif stage in ("naive_qda_ground_truth", "naive_qda_default_tol"):
+        fkey = "ground_truth" if stage == "naive_qda_ground_truth" else "default_tol"
+        naive_qda = entry.setdefault("naive_qda", {})
         if status == "ok":
             err_f, grad = value  # hess=False here, so norm_err returns (err, grad)
             tol = ("AbsTol=1e-12, RelTol=1e-10, n_ruben=5000" if fkey == "ground_truth"
                    else "AbsTol=1e-10, RelTol=1e-6 (package defaults)")
-            fisher[fkey] = dict(status=status, time_s=elapsed, err=err_f,
-                                 grad=grad_flat(grad, D).tolist(), tol=tol)
+            naive_qda[fkey] = dict(status=status, time_s=elapsed, err=err_f,
+                                    grad=grad_flat(grad, D).tolist(), tol=tol)
         else:
-            fisher[fkey] = dict(status=status, time_s=elapsed, detail=str(value))
-    elif stage == "fisher_fd_grad":
-        fisher = entry.setdefault("fisher", {})
+            naive_qda[fkey] = dict(status=status, time_s=elapsed, detail=str(value))
+    elif stage == "naive_qda_fd_grad":
+        naive_qda = entry.setdefault("naive_qda", {})
         if status == "ok":
             fd_grad, n_calls = value
-            fisher["fd_grad"] = dict(status=status, time_s=elapsed, grad=fd_grad.tolist(),
-                                      n_calls=n_calls, numdifftools_opts="defaults (num_steps=15)")
+            naive_qda["fd_grad"] = dict(status=status, time_s=elapsed, grad=fd_grad.tolist(),
+                                         n_calls=n_calls, numdifftools_opts="defaults (num_steps=15)")
         else:
-            fisher["fd_grad"] = dict(status=status, time_s=elapsed, detail=str(value))
+            naive_qda["fd_grad"] = dict(status=status, time_s=elapsed, detail=str(value))
 
 
 def finalize_problem(entry):
     """All of this problem's stages have returned -- compute the cross-stage
     errors/speeds that need ground truth, for both the optimal-boundary
-    Hessian test (entry["summary"]) and the Fisher-boundary gradient test
-    (entry["fisher"]["summary"])."""
+    Hessian test (entry["summary"]) and the naive-QDA-boundary gradient test
+    (entry["naive_qda"]["summary"])."""
     gt = entry.get("ground_truth", {})
     grad_gt_flat = np.array(gt["grad"]) if gt.get("status") == "ok" else None
     hess_gt_flat = np.array(gt["hess"]) if gt.get("status") == "ok" else None
@@ -593,15 +598,15 @@ def finalize_problem(entry):
     t_fd_grad = fg.get("time_s") if fg.get("status") == "ok" else None
     t_fd_hess = fh.get("time_s") if fh.get("status") == "ok" else None
 
-    # Sum of every stage's own time_s (now including the 3 Fisher stages
+    # Sum of every stage's own time_s (now including the 3 naive-QDA stages
     # below) -- since every stage of a problem now runs back to back in the
     # one worker that owns it, this sum IS that problem's observed
     # wall-clock, unlike under the old stage-level scheduler where a
     # problem's stages could run on different workers at overlapping times.
-    fisher = entry.get("fisher", {})
+    naive_qda = entry.get("naive_qda", {})
     entry["summary"] = dict(
         total_stage_time_s=(sum(s.get("time_s", 0.0) for s in (gt, dt, fg, fh))
-                             + sum(s.get("time_s", 0.0) for s in fisher.values() if isinstance(s, dict))),
+                             + sum(s.get("time_s", 0.0) for s in naive_qda.values() if isinstance(s, dict))),
         rel_speed_grad=(t_fd_grad / t_default if t_default and t_fd_grad else None),
         rel_speed_hess=(t_fd_hess / t_default if t_default and t_fd_hess else None),
         rel_acc_grad=(fd_err_grad / analytic_err_grad
@@ -610,37 +615,37 @@ def finalize_problem(entry):
                       if fd_err_hess is not None and analytic_err_hess else None),
     )
 
-    # Same cross-stage bookkeeping, but for the Fisher-boundary gradient-only
-    # test: no Hessian, so no *_hess fields.
-    if fisher:
-        fgt = fisher.get("ground_truth", {})
-        fisher_grad_gt = np.array(fgt["grad"]) if fgt.get("status") == "ok" else None
+    # Same cross-stage bookkeeping, but for the naive-QDA-boundary
+    # gradient-only test: no Hessian, so no *_hess fields.
+    if naive_qda:
+        fgt = naive_qda.get("ground_truth", {})
+        naive_qda_grad_gt = np.array(fgt["grad"]) if fgt.get("status") == "ok" else None
 
-        fdt = fisher.get("default_tol", {})
-        fisher_analytic_err_grad = None
-        if fdt.get("status") == "ok" and fisher_grad_gt is not None:
-            fisher_analytic_err_grad = float(np.max(np.abs(np.array(fdt["grad"]) - fisher_grad_gt)))
-            fdt["analytic_err_grad"] = fisher_analytic_err_grad
+        fdt = naive_qda.get("default_tol", {})
+        naive_qda_analytic_err_grad = None
+        if fdt.get("status") == "ok" and naive_qda_grad_gt is not None:
+            naive_qda_analytic_err_grad = float(np.max(np.abs(np.array(fdt["grad"]) - naive_qda_grad_gt)))
+            fdt["analytic_err_grad"] = naive_qda_analytic_err_grad
 
-        ffg = fisher.get("fd_grad", {})
-        fisher_fd_err_grad = None
-        if ffg.get("status") == "ok" and fisher_grad_gt is not None:
-            fisher_fd_err_grad = float(np.max(np.abs(np.array(ffg["grad"]) - fisher_grad_gt)))
-            ffg["err"] = fisher_fd_err_grad
+        ffg = naive_qda.get("fd_grad", {})
+        naive_qda_fd_err_grad = None
+        if ffg.get("status") == "ok" and naive_qda_grad_gt is not None:
+            naive_qda_fd_err_grad = float(np.max(np.abs(np.array(ffg["grad"]) - naive_qda_grad_gt)))
+            ffg["err"] = naive_qda_fd_err_grad
 
-        t_fisher_default = fdt.get("time_s") if fdt.get("status") == "ok" else None
-        t_fisher_fd = ffg.get("time_s") if ffg.get("status") == "ok" else None
-        fisher["summary"] = dict(
-            rel_speed_grad=(t_fisher_fd / t_fisher_default if t_fisher_default and t_fisher_fd else None),
-            rel_acc_grad=(fisher_fd_err_grad / fisher_analytic_err_grad
-                          if fisher_fd_err_grad is not None and fisher_analytic_err_grad else None),
+        t_naive_qda_default = fdt.get("time_s") if fdt.get("status") == "ok" else None
+        t_naive_qda_fd = ffg.get("time_s") if ffg.get("status") == "ok" else None
+        naive_qda["summary"] = dict(
+            rel_speed_grad=(t_naive_qda_fd / t_naive_qda_default if t_naive_qda_default and t_naive_qda_fd else None),
+            rel_acc_grad=(naive_qda_fd_err_grad / naive_qda_analytic_err_grad
+                          if naive_qda_fd_err_grad is not None and naive_qda_analytic_err_grad else None),
         )
 
 
 # ---------------------------------------------------------------------------
 # Per-problem worker: runs one problem's entire pipeline -- boundary setup,
 # then all 7 stages one after another (4 for the optimal-boundary Hessian
-# test, 3 for the Fisher-boundary gradient test) -- inside a single
+# test, 3 for the naive-QDA-boundary gradient test) -- inside a single
 # ProcessPoolExecutor worker. Parallelism is across problems only (see the
 # module docstring): each stage still gets its own nested subprocess via
 # run_in_subprocess (for warning capture, not timeout), but stages of the
@@ -675,13 +680,13 @@ def _run_problem(problem, outdir):
     try:
         quad = gx2.norm_class_opt_bd(mu0, v0, mu1, v1, p0=p0, p1=p1)
         theta0 = flatten(quad, D)
-        quad_fisher = fisher_boundary(mu0, v0, mu1, v1, p0=p0, p1=p1)
-        theta0_fisher = flatten(quad_fisher, D)
+        quad_naive_qda = naive_qda_boundary(mu0, v0, mu1, v1, p0=p0, p1=p1)
+        theta0_naive_qda = flatten(quad_naive_qda, D)
         result["quad"] = {k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in quad.items()}
-        result["quad_fisher"] = {k: (v.tolist() if hasattr(v, "tolist") else v)
-                                  for k, v in quad_fisher.items()}
+        result["quad_naive_qda"] = {k: (v.tolist() if hasattr(v, "tolist") else v)
+                                     for k, v in quad_naive_qda.items()}
         _write_partial(result_path, result)
-        log("boundaries computed (optimal + Fisher)")
+        log("boundaries computed (optimal + naive-QDA)")
     except Exception:
         result["error"] = traceback.format_exc()
         _write_partial(result_path, result)
@@ -694,9 +699,9 @@ def _run_problem(problem, outdir):
         ("default_tol", _stage_analytic, (mu0, v0, mu1, v1, quad, p0, p1, {}, True)),
         ("fd_grad", _stage_fd_grad, (theta0, mu0, v0, mu1, v1, D, p0, p1, log_path)),
         ("fd_hess", _stage_fd_hess, (theta0, mu0, v0, mu1, v1, D, p0, p1, log_path, 9)),
-        ("fisher_ground_truth", _stage_analytic, (mu0, v0, mu1, v1, quad_fisher, p0, p1, tight, False)),
-        ("fisher_default_tol", _stage_analytic, (mu0, v0, mu1, v1, quad_fisher, p0, p1, {}, False)),
-        ("fisher_fd_grad", _stage_fd_grad, (theta0_fisher, mu0, v0, mu1, v1, D, p0, p1, log_path)),
+        ("naive_qda_ground_truth", _stage_analytic, (mu0, v0, mu1, v1, quad_naive_qda, p0, p1, tight, False)),
+        ("naive_qda_default_tol", _stage_analytic, (mu0, v0, mu1, v1, quad_naive_qda, p0, p1, {}, False)),
+        ("naive_qda_fd_grad", _stage_fd_grad, (theta0_naive_qda, mu0, v0, mu1, v1, D, p0, p1, log_path)),
     ]
 
     try:
@@ -733,7 +738,7 @@ def main():
         cpu_count=os.cpu_count(),
         n_workers=n_workers,
         parallelism_note=(f"problem-level: each of the {len(PROBLEMS)} problems' full 7-stage "
-                           f"pipeline (4 optimal-boundary Hessian-test stages, 3 Fisher-boundary "
+                           f"pipeline (4 optimal-boundary Hessian-test stages, 3 naive-QDA-boundary "
                            f"gradient-test stages) runs sequentially inside one "
                            f"ProcessPoolExecutor(max_workers={n_workers}) worker, pinned to a "
                            "single thread (OMP/OpenBLAS/MKL/numexpr num_threads=1, set before "
