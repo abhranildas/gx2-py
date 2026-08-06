@@ -80,7 +80,9 @@ def char(t, w, k, l, s, m):
     Parameters
     ----------
     t : array_like
-        Point(s) at which to evaluate the characteristic function.
+        Point(s) at which to evaluate the characteristic function. May be
+        complex (e.g. for Cauchy-integral moment formulas or contour-shifted
+        Fourier integrals) -- the underlying formula is analytic in t.
     w : array_like
         Weights of the non-central chi-square terms.
     k : array_like
@@ -100,7 +102,7 @@ def char(t, w, k, l, s, m):
     w = asrow(w)
     k = asrow(k)
     l = asrow(l)
-    t = np.asarray(t, dtype=float)
+    t = np.asarray(t, dtype=complex)
     tf = t.ravel()
     tc = tf[:, None]  # column
 

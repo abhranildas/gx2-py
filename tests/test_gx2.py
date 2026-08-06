@@ -29,6 +29,14 @@ def test_char_at_zero():
     assert phi[0] == pytest.approx(1.0 + 0j)
 
 
+def test_char_complex_arg():
+    # regression: char() used to force-cast t to float, crashing on complex
+    # input needed for Cauchy-integral moments / contour-shifted Fourier
+    # integrals. Expected value cross-checked against MATLAB's gx2char.
+    phi = gx2.char(0.3 + 0.7j, W, K, LAM, 0, 5.0)
+    assert complex(phi) == pytest.approx(2.359135028791082e-06 - 8.189234259495991e-07j)
+
+
 def test_ncx2_fallback_cdf_pdf():
     w, k, lam, s, m = [3.0], [4], [2.0], 0, 1.5
     x = np.array([5.0, 10.0, 20.0])
