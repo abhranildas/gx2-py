@@ -46,7 +46,6 @@ in the getting-started notebook.
 
 | function | purpose |
 |----------|---------|
-| `norm_err(mu0, v0, mu1, v1, quad, p0=, p1=, grad=, hess=, ...)` | total classification error between two normal classes separated by a quadratic boundary (and optionally its gradient/Hessian wrt the boundary coefficients `q2, q1, q0`) |
 | `gx2_to_norm_quad_params(w, k, l, s, m)` | gx2 → quadratic-form coefficients of a standard normal |
 | `norm_quad_to_gx2_params(mu, v, quad, merge=)` | quadratic form of a normal → gx2 parameters |
 | `stat(w, k, l, s, m)` | mean and variance |
@@ -58,12 +57,12 @@ in the getting-started notebook.
 | `cdf_grad_gx2(x, w, k, l, s, m, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the native parameters `w, k, l, s, m` |
 | `cdf_grad_bd(x, mu, v, quad, wrt=, hess=, ...)` | exact gradient (and optionally Hessian) of the cdf wrt the quadratic boundary coefficients `q2, q1, q0` |
 | `norm_class_opt_bd(mu0, v0, mu1, v1, p0=, p1=)` | optimal (Bayes) quadratic boundary between two normal classes, for use with `norm_err`/`cdf_grad_bd` |
+| `norm_err(mu0, v0, mu1, v1, quad, p0=, p1=, grad=, hess=, ...)` | total classification error between two normal classes separated by a quadratic boundary (and optionally its gradient/Hessian wrt the boundary coefficients `q2, q1, q0`) |
 
 For full documentation of any function, use Python's `help` (or `?` in
 Jupyter), e.g.:
 
 ```python
-help(gx2.norm_err)
 help(gx2.gx2_to_norm_quad_params)
 help(gx2.norm_quad_to_gx2_params)
 help(gx2.stat)
@@ -75,6 +74,7 @@ help(gx2.inv)
 help(gx2.cdf_grad_gx2)
 help(gx2.cdf_grad_bd)
 help(gx2.norm_class_opt_bd)
+help(gx2.norm_err)
 ```
 
 ## Computation methods for `cdf` / `pdf`
