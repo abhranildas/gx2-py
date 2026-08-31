@@ -9,7 +9,7 @@ import warnings
 from math import comb
 import numpy as np
 from scipy.stats import ncx2, chi2
-from scipy.integrate import quad_vec
+from scipy.integrate import quad, quad_vec
 from scipy.interpolate import interp1d
 from scipy.special import gamma as _gamma
 
@@ -126,11 +126,20 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
 
     integral = np.empty(xf.size)
     if precision == "basic":
-        # integrate over all x points in one adaptive quadrature: for each
-        # node u, the x-independent parts of the integrand (theta's sum over
-        # terms, and rho) are computed once and shared across all x.
-        integral = quad_vec(lambda u: imhof_integrand(u, xf, w, k, l, s, m, output, idx, nx),
-                            0, np.inf, epsabs=AbsTol, epsrel=RelTol)[0]
+        if xf.size <= 2:
+            # quad_vec's Python-level adaptive quadrature carries more
+            # per-call overhead than quad's compiled QUADPACK routines; that
+            # overhead dominates when there are only one or two x points to
+            # share a quadrature over, so loop plain quad instead.
+            for i, xi in enumerate(xf):
+                integral[i] = quad(lambda u: imhof_integrand(u, xi, w, k, l, s, m, output, idx, nx),
+                                   0, np.inf, epsabs=AbsTol, epsrel=RelTol)[0]
+        else:
+            # integrate over all x points in one adaptive quadrature: for each
+            # node u, the x-independent parts of the integrand (theta's sum over
+            # terms, and rho) are computed once and shared across all x.
+            integral = quad_vec(lambda u: imhof_integrand(u, xf, w, k, l, s, m, output, idx, nx),
+                                0, np.inf, epsabs=AbsTol, epsrel=RelTol)[0]
     elif precision == "vpa":
         for i, xi in enumerate(xf):
             val = mp.quad(lambda u: _imhof_integrand_mp(u, xi, w, k, l, s, m, output, idx, nx),
