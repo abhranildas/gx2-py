@@ -510,7 +510,7 @@ def _store_stage_result(entry, stage, status, value, elapsed, D):
             entry["ground_truth"] = dict(status=status, time_s=elapsed, err=err_gt,
                                           grad=grad_flat(grad_gt, D).tolist(),
                                           hess=hess_flat(hess_gt, D).tolist(),
-                                          tol="AbsTol=1e-12, RelTol=1e-10, n_ruben=5000")
+                                          tol="AbsTol=1e-12, RelTol=1e-10")
         else:
             entry["ground_truth"] = dict(status=status, time_s=elapsed, detail=str(value))
     elif stage == "default_tol":
@@ -545,7 +545,7 @@ def _store_stage_result(entry, stage, status, value, elapsed, D):
         naive_qda = entry.setdefault("naive_qda", {})
         if status == "ok":
             err_f, grad = value  # hess=False here, so norm_err returns (err, grad)
-            tol = ("AbsTol=1e-12, RelTol=1e-10, n_ruben=5000" if fkey == "ground_truth"
+            tol = ("AbsTol=1e-12, RelTol=1e-10" if fkey == "ground_truth"
                    else "AbsTol=1e-10, RelTol=1e-6 (package defaults)")
             naive_qda[fkey] = dict(status=status, time_s=elapsed, err=err_f,
                                     grad=grad_flat(grad, D).tolist(), tol=tol)
@@ -693,7 +693,7 @@ def _run_problem(problem, outdir):
         log("PROBLEM_FAILED (boundary setup):\n" + result["error"])
         return name
 
-    tight = dict(AbsTol=1e-12, RelTol=1e-10, n_ruben=5000)
+    tight = dict(AbsTol=1e-12, RelTol=1e-10)
     stage_defs = [
         ("ground_truth", _stage_analytic, (mu0, v0, mu1, v1, quad, p0, p1, tight, True)),
         ("default_tol", _stage_analytic, (mu0, v0, mu1, v1, quad, p0, p1, {}, True)),

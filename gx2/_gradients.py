@@ -11,7 +11,7 @@ from ._helpers import asrow
 from ._convert import norm_quad_to_gx2_params
 from ._distribution import cdf, pdf
 from ._methods import imhof
-from ._basic import char
+from ._basic import char, stat
 from ._dens_deriv import dens_deriv
 
 _NATIVE_GROUPS = ("w", "k", "l", "s", "m")
@@ -274,15 +274,95 @@ def _cusp_probe_merge(vals, cusp_scale):
     return np.where(converging, v2, np.where(d2 > 0, np.inf, -np.inf))
 
 
+def _wynn_epsilon(S):
+    """Wynn's epsilon algorithm on the partial sums ``S`` along axis 0,
+    elementwise over the remaining axes: the extrapolated limit, taken as the
+    last entry of the even column of the epsilon table that changed least
+    from the previous even column (column 0 counting with its own last
+    change). Same as ``wynn_epsilon`` in ``gx2_osc_integral.m``."""
+    prev = np.zeros((S.shape[0] + 1,) + S.shape[1:])     # column -1
+    cur = S                                              # column 0
+    best = S[-1]
+    best_change = np.abs(S[-1] - S[max(S.shape[0] - 2, 0)])
+    last_even = S[-1]
+    for col in range(1, S.shape[0]):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            nxt = prev[1:cur.shape[0]] + 1.0 / np.diff(cur, axis=0)
+        if not np.isfinite(nxt).any():
+            break        # every sequence already converged exactly
+        prev, cur = cur, nxt
+        if col % 2 == 0:
+            change = np.abs(cur[-1] - last_even)
+            better = np.isfinite(change) & (change < best_change)
+            best = np.where(better, cur[-1], best)
+            best_change = np.where(better, change, best_change)
+            last_even = np.where(np.isfinite(cur[-1]), cur[-1], last_even)
+    return best
+
+
+def _osc_integral(amp, xm, sd, AbsTol, RelTol, n_cycles=50):
+    """Integrals over ``t`` in ``(0, inf)`` of ``Re(amp(t) * exp(-1j*t*xm))``,
+    for every entry of the complex vector ``amp(t)`` and every offset
+    ``xm = x - m``; shape ``(numel(amp), numel(xm))``.
+
+    This is the Fourier-inversion integral of :func:`imhof` with a
+    vector-valued amplitude, and it is handled the same way. The amplitude
+    varies slowly, but at ``s = 0`` it decays only like a power of ``t``, so
+    the integrand keeps oscillating far out. Several points are first
+    integrated together in one plain quadrature over ``(0, inf)``. If that
+    does not converge, or there is one point, each point is integrated on
+    its own: within ``2 sd`` of ``m`` plainly first, and otherwise, or if
+    that fails, as a head of one period (at most ``2*pi/sd`` in ``t``)
+    integrated plainly, plus a tail summed cycle by cycle, with the partial
+    sums of the alternating cycle integrals extrapolated by Wynn's epsilon
+    algorithm, as QUADPACK's QAWF does (QAWF itself is scalar-only). A cycle
+    is ``2*floor(|c|)+1`` half-periods, so about ``2*pi`` long for
+    ``|c| >= 1``, and all cycles go into one vectorized quadrature.
+    Everything runs in the dimensionless variable ``v = sd*t``, so results
+    do not depend on the units of ``x``.
+    """
+    om = np.atleast_1d(xm) / sd                 # frequency in v, per point
+
+    def f(v, o):
+        return np.real(amp(v / sd)[:, None] * np.exp(-1j * v * o[None, :])) / sd
+
+    def plain(o):
+        r = quad_vec(lambda v: f(v, o), 0, np.inf, epsabs=AbsTol, epsrel=RelTol,
+                     limit=200, full_output=True)
+        return r[0], r[2].status == 0
+
+    if om.size > 1:
+        out, ok = plain(om)
+        if ok:
+            return out
+    else:
+        out = np.empty((amp(0.0).size, 1))
+    for i, o in enumerate(om):
+        oi = om[i:i + 1]
+        if abs(o) <= 1:
+            val, ok = plain(oi)
+            if ok or o == 0:
+                out[:, i] = val[:, 0]
+                continue
+        v0 = 2 * np.pi / max(abs(o), 1)
+        L = (2 * np.floor(abs(o)) + 1) * np.pi / abs(o)
+        head = quad_vec(lambda v: f(v, oi)[:, 0], 0, v0, epsabs=AbsTol, epsrel=RelTol)[0]
+        cycles = quad_vec(
+            lambda u: np.stack([f(v0 + (j + u) * L, oi)[:, 0] for j in range(n_cycles)]) * L,
+            0, 1, epsabs=AbsTol / n_cycles, epsrel=RelTol)[0]
+        out[:, i] = head + _wynn_epsilon(np.cumsum(cycles, axis=0))
+    return out
+
+
 def _boundary_raw(x, mu, v, quad, wrt, hess, AbsTol=1e-10, RelTol=1e-6,
-                   precision="basic", n_ruben=1000):
+                   precision="basic"):
     """Shared machinery behind :func:`cdf_grad_bd` and
     :func:`norm_err_grad_bd`: one class's raw (pre-cusp-resolution,
     pre-squeeze, trailing-``nx``) gradient/Hessian blocks for
     ``F(x0)=P(q(x)<=x0)``, plus everything needed to resolve a cusp there --
     the ``at_cusp`` mask, its scale, and a probe callable
-    ``inversion_grad_hess(s_eff, want_hess)`` giving the ``s!=0`` inversion
-    route's grad/Hessian at an arbitrary artificial normal term.
+    ``inversion_grad_hess(s_eff, want_hess)`` giving the grad/Hessian with
+    the normal term replaced by an arbitrary ``s_eff``.
     :func:`cdf_grad_bd` resolves the cusp on this class alone;
     :func:`norm_err_grad_bd` instead combines two classes' raw output and
     inversion probes *before* resolving, since resolving each class's
@@ -316,57 +396,43 @@ def _boundary_raw(x, mu, v, quad, wrt, hess, AbsTol=1e-10, RelTol=1e-6,
     w, k, l, s, m, aux = norm_quad_to_gx2_params(mu, v, quad, return_aux=True)
     S = aux["S"]; V = aux["V"]; dvals = aux["d"].ravel()
     SigInv_mu = np.linalg.solve(v, mu)
-
     opts = dict(AbsTol=AbsTol, RelTol=RelTol, precision=precision)
 
-    # s=0 is the pure-quadratic-boundary (classification) regime, where the
-    # inversion integrals lose convergence for total dof D<=4. There we take
-    # the robust shifted-dof route: expand the weights in the eigenbasis,
-    # M^{-1}=sum_j g_j u_j u_j' and mu_tilde=sum_j g_j c_j u_j (with
-    # u_j=Sigma^{1/2} v_j, g_j=(1-2i t w_j)^{-1}, c_j=alpha_j+i t beta_j), so
-    # that every block collapses to a finite sum of shifted-dof density
-    # derivatives f^(n)_[..], evaluated robustly by dens_deriv. A single
-    # engine (evalblock) serves the gradient (one factor it, p0=1) and the
-    # Hessian (two, p0=2). When s!=0 the Gaussian damping makes the direct
-    # inversion converge, and we keep it.
-    s0 = (s == 0)
-
-    # The mixed-sign, s=0 route below carries x-derivatives on whichever
-    # split part is sampled in its smooth interior, away from its own edge
-    # (see dens_deriv's docstring). That shielding breaks down when the
-    # threshold x0 coincides exactly with m, the alignment point of the two
-    # floors -- a boundary built from exact symmetry (e.g. an antipodal-
-    # mean, swapped-covariance classification boundary) lands exactly here,
-    # not just in principle (gx2_derivatives.md open item 3.7(a)). Detected
-    # once here; resolved below via _resolve_cusp_terms, which compares the
-    # (always-valid, x0-independent-of-any-cusp) s!=0 inversion at a
-    # shrinking sequence of tiny artificial normal terms, rather than
-    # trusting whatever the s=0 route's quad() returns right at that point.
+    # At s=0 with mixed-sign weights, the density has a cusp at x0=m (e.g. a
+    # logarithmic divergence for two k=1 terms of opposite sign), and some
+    # derivative blocks are genuinely infinite there. A boundary built from
+    # exact symmetry (e.g. an antipodal-mean, swapped-covariance
+    # classification boundary) lands exactly on it, not just in principle.
+    # Detected once here; resolved via _resolve_cusp_terms, which compares
+    # the inversion at a shrinking sequence of tiny artificial normal terms
+    # rather than trusting the s=0 integral right at that point.
     mixed_sign = not (bool(np.all(w > 0)) or bool(np.all(w < 0)))
     cusp_scale = max(1.0, float(np.sum(np.abs(w) * k)))
-    at_cusp = s0 & mixed_sign & (np.abs(x - m) <= _CUSP_REL_TOL * cusp_scale)
+    at_cusp = (s == 0) & mixed_sign & (np.abs(x - m) <= _CUSP_REL_TOL * cusp_scale)
 
-    # Factory for the s!=0 inversion integrands, parametrized by s_eff so
-    # the same code serves the normal s!=0 case (s_eff=s) and the cusp probe
-    # below (s_eff -> tiny artificial values, s itself being 0 there).
-    def make_integrands(s_eff):
+    want_q12 = wanted("q1") or wanted("q2")
+
+    def inversion_grad_hess(s_eff, want_hess):
+        # Every block is one Fourier-inversion integral of the form
+        # Re(amplitude * exp(-i t (x0-m))), the amplitude being built from
+        # the weights M^{-1}(t) and mu_tilde(t) times the characteristic
+        # function (with its offset m moved into the kernel). The gradient
+        # blocks are density-type integrals (the (it) of the master formula
+        # cancels the 1/t of the inversion); the Hessian blocks keep one
+        # factor of t, giving t*Im(z) = Re(-i*t*z).
         def weights(t):
-            phi = complex(np.asarray(char(t, w, k, l, s_eff, m)))
-            g = 1.0 / (1 - 2j * t * dvals)              # (dim,)
+            phi = complex(np.asarray(char(t, w, k, l, s_eff, 0)))
+            g = 1.0 / (1 - 2j * t * dvals)               # (dim,)
             Minv = S @ (V * g) @ V.T @ S
-            pv = SigInv_mu + 1j * t * q1c                # p(t), (dim,)
-            mut = Minv @ pv
+            mut = Minv @ (SigInv_mu + 1j * t * q1c)       # mu_tilde(t), (dim,)
             return Minv, mut, phi
 
-        def grad_integrand(t):
+        def grad_amp(t):
             Minv, mut, phi = weights(t)
             P = Minv + np.outer(mut, mut)
-            block = np.concatenate([mut[:, None], P], axis=1)   # (dim, dim+1)
-            kern = np.exp(-1j * t * x)                          # (nx,)
-            Bphi = block * phi
-            return np.real(Bphi[:, :, None] * kern[None, None, :])
+            return (np.concatenate([mut[:, None], P], axis=1) * phi).ravel()
 
-        def hess_integrand(t):
+        def hess_amp(t):
             Minv, mut, phi = weights(t)
             P = Minv + np.outer(mut, mut)
             Pmm = np.outer(mut, mut)
@@ -375,198 +441,33 @@ def _boundary_raw(x, mu, v, quad, wrt, hess, AbsTol=1e-10, RelTol=1e-6,
                         + np.einsum("qr,sp->pqrs", Minv, Pmm)
                         + np.einsum("qr,sp->pqrs", Pmm, Minv))
                    + np.einsum("pq,rs->pqrs", P, P))
-            Wflat = np.concatenate([
-                np.array([1.0 + 0j]), mut.ravel(),
-                P.ravel(), P.ravel(),
-                Wq1q2.ravel(), WQ2.ravel(),
-            ])
-            kern = np.exp(-1j * t * x)
-            return t * np.imag(Wflat[:, None] * phi * kern[None, :])
+            Wflat = np.concatenate([np.array([1.0 + 0j]), mut.ravel(), P.ravel(), P.ravel(),
+                                    Wq1q2.ravel(), WQ2.ravel()])
+            return -1j * t * Wflat * phi
 
-        return grad_integrand, hess_integrand
-
-    def inversion_grad_hess(s_eff, want_hess):
-        # Full grad (and, if want_hess, Hessian) via the s!=0 inversion route
-        # at an arbitrary s_eff, in the same raw (pre-squeeze, trailing-nx)
-        # shape used internally below. Used both for the normal s!=0 case
-        # (s_eff=s) and, when at_cusp, as the convergence probe.
-        grad_integrand, hess_integrand = make_integrands(s_eff)
-        g0r = -np.asarray(pdf(x, w, k, l, s_eff, m, **opts)).reshape(nx)
-        A, _ = quad_vec(grad_integrand, 0, np.inf, epsabs=AbsTol, epsrel=RelTol)
-        A = -A / np.pi                                  # (dim, dim+1, nx)
-        Gq1r = A[:, 0, :]
-        Gq2r = A[:, 1:, :]
-        Gq2r = 0.5 * (Gq2r + np.swapaxes(Gq2r, 0, 1))
+        sd = float(np.sqrt(stat(w, k, l, s_eff, m)[1])) or 1.0
+        # dF/dq0 = -f(x0), since q0 shifts q rigidly
+        g = dict(q0=-np.asarray(pdf(x, w, k, l, s_eff, m, **opts)).reshape(nx))
+        if want_q12:
+            A = -_osc_integral(grad_amp, x - m, sd, AbsTol, RelTol).reshape(dim, dim + 1, nx) / np.pi
+            g["q1"] = A[:, 0, :]
+            g["q2"] = 0.5 * (A[:, 1:, :] + np.swapaxes(A[:, 1:, :], 0, 1))
         if not want_hess:
-            return dict(q0=g0r, q1=Gq1r, q2=Gq2r), None
-        Hraw, _ = quad_vec(hess_integrand, 0, np.inf, epsabs=AbsTol, epsrel=RelTol)
-        Hraw = Hraw / np.pi
+            return g, None
+        Hraw = _osc_integral(hess_amp, x - m, sd, AbsTol, RelTol) / np.pi
         off = 0
-        q0q0r = Hraw[0, :]; off = 1
-        q0q1r = Hraw[off:off + dim, :]; off += dim
-        q0q2r = Hraw[off:off + dim ** 2, :].reshape(dim, dim, nx); off += dim ** 2
-        q1q1r = Hraw[off:off + dim ** 2, :].reshape(dim, dim, nx); off += dim ** 2
-        q1q2r = Hraw[off:off + dim ** 3, :].reshape(dim, dim, dim, nx); off += dim ** 3
-        q2q2r = Hraw[off:off + dim ** 4, :].reshape(dim, dim, dim, dim, nx)
-        q0q2r = 0.5 * (q0q2r + np.swapaxes(q0q2r, 0, 1))
-        q1q1r = 0.5 * (q1q1r + np.swapaxes(q1q1r, 0, 1))
-        return (dict(q0=g0r, q1=Gq1r, q2=Gq2r),
-                dict(q0q0=q0q0r, q0q1=q0q1r, q0q2=q0q2r, q1q1=q1q1r, q1q2=q1q2r, q2q2=q2q2r))
-
-    if s0:
-        U = S @ V                     # columns u_j = Sigma^{1/2} v_j
-        alph = U.T @ SigInv_mu        # alpha_j = u_j' Sigma^{-1} mu
-        bet = U.T @ q1c               # beta_j  = u_j' q1
-        tol0 = 1e-9 * max(1.0, np.max(np.abs(dvals)))
-        compj = np.full(dim, -1, dtype=int)     # mode -> merged (w,k) component; -1 for a zero mode
-        for j in range(dim):
-            if abs(dvals[j]) > tol0:
-                compj[j] = int(np.argmin(np.abs(w - dvals[j])))
-        memo = {}
-        densopts = dict(AbsTol=AbsTol, RelTol=RelTol, n_ruben=n_ruben)
-
-        def fder(bumpvec, n):
-            # memoized robust n-th density derivative of the gx2 with
-            # k+bumpvec dof
-            key = (tuple(bumpvec.tolist()), n)
-            if key in memo:
-                return memo[key]
-            val = np.asarray(dens_deriv(x, w, k + bumpvec, l, s, m, n, **densopts)).reshape(nx)
-            memo[key] = val
-            return val
-
-        def Dterm(gmodes, p):
-            # T[(it)^p prod_g(gmodes) phi] = (-1)^p f^{(p-1)}_[shift](x),
-            # where each g_j advances its component's dof by 2 (rule R1) and
-            # (it)^p is p argument-derivatives (rule R2). Zero modes add no
-            # shift.
-            bumpvec = np.zeros(k.size)
-            for jj in gmodes:
-                c = compj[jj]
-                if c >= 0:
-                    bumpvec[c] += 2
-            return ((-1.0) ** p) * fder(bumpvec, p - 1)
-
-        def cexp(cmodes, gmodes, p0):
-            # T[(it)^p0 * prod_g(gmodes) * prod_{i in cmodes}(alpha_i+i t
-            # beta_i) phi] = sum over subsets S of cmodes: (prod_S
-            # beta)(prod_rest alpha) * Dterm(gmodes, p0+|S|). gmodes fixes
-            # the dof shift; each beta pick raises the it-power (hence the
-            # density-derivative order) by one.
-            nc = cmodes.size
-            val = np.zeros(nx)
-            for mask in range(2 ** nc):
-                coef = 1.0
-                nb = 0
-                for ii in range(nc):
-                    if (mask >> ii) & 1:
-                        coef *= bet[cmodes[ii]]
-                        nb += 1
-                    else:
-                        coef *= alph[cmodes[ii]]
-                if coef != 0:
-                    val = val + coef * Dterm(gmodes, p0 + nb)
-            return val
-
-        def evalblock(monos, F, p0):
-            # Assemble a rank-F tensor (shape (dim,)*F + (nx,)) from a list
-            # of monomials in M^{-1} and mu_tilde. Each monomial mo records,
-            # per free tensor index, which mode variable supplies its
-            # u-column (mo['mv']), and, per mode variable, whether that
-            # factor carries the linear term c=alpha+i t beta (mo['cv'] True
-            # for a mu_tilde factor, False for a bare M^{-1}). Sums over all
-            # mode assignments; for each, cexp expands the c-factors and
-            # Dterm reads off the shifted-dof density derivative.
-            T = np.zeros((dim,) * F + (nx,))
-            for mo in monos:
-                mv = mo["mv"]; cv = mo["cv"]; nmv = cv.size
-                for lin in range(dim ** nmv):
-                    assign = np.empty(nmv, dtype=int)
-                    r = lin
-                    for vv in range(nmv):
-                        assign[vv] = r % dim
-                        r //= dim
-                    sc = cexp(assign[cv], assign, p0)      # (nx,)
-                    if not np.any(sc):
-                        continue
-                    rank1 = U[:, assign[mv[0]]]
-                    for f in range(1, F):
-                        rank1 = np.multiply.outer(rank1, U[:, assign[mv[f]]])
-                    T += mo["pref"] * np.multiply.outer(rank1, sc)
-            return T
-
-        def mk(pref, mv, cv):
-            return dict(pref=pref, mv=np.asarray(mv, dtype=int), cv=np.asarray(cv, dtype=bool))
-    else:
-        grad_integrand, hess_integrand = make_integrands(s)
-
-    # q0 block: dF/dq0 = -f(x0). Since q0 shifts q rigidly, this is just
-    # -pdf.
-    raw_grad = {}
-    if wanted("q0"):
-        if s0:
-            raw_grad["q0"] = Dterm(np.array([], dtype=int), 1)
-        else:
-            raw_grad["q0"] = -np.asarray(pdf(x, w, k, l, s, m, **opts)).reshape(nx)
-
-    # q1 and Q2 blocks. Inversion route (s!=0): one integration over t
-    # returns both, since they share the weights M^{-1}(t) and mu_tilde(t);
-    # the (it) of the master formula cancels the 1/t of the inversion,
-    # leaving density-type integrals. Robust route (s=0): the same two
-    # blocks from the eigenbasis engine at p0=1.
-    if wanted("q1") or wanted("q2"):
-        if s0:
-            if wanted("q1"):
-                raw_grad["q1"] = evalblock([mk(1, [0], [True])], 1, 1)
-            if wanted("q2"):
-                Pblk = [mk(1, [0, 0], [False]), mk(1, [0, 1], [True, True])]
-                Gq2 = evalblock(Pblk, 2, 1)
-                raw_grad["q2"] = 0.5 * (Gq2 + np.swapaxes(Gq2, 0, 1))
-        else:
-            A, _ = quad_vec(grad_integrand, 0, np.inf, epsabs=AbsTol, epsrel=RelTol)
-            A = -A / np.pi                              # (dim, dim+1, nx)
-            if wanted("q1"):
-                raw_grad["q1"] = A[:, 0, :]
-            if wanted("q2"):
-                Gq2 = A[:, 1:, :]
-                raw_grad["q2"] = 0.5 * (Gq2 + np.swapaxes(Gq2, 0, 1))
-
-    raw_hess = None
-    if hess:
-        # ---- Hessian (2nd output): the boundary blocks ----
-        if s0:
-            q0q0 = Dterm(np.array([], dtype=int), 2)
-            q0q1 = evalblock([mk(1, [0], [True])], 1, 2)
-            Pblk = [mk(1, [0, 0], [False]), mk(1, [0, 1], [True, True])]
-            q0q2 = evalblock(Pblk, 2, 2)
-            q1q1 = q0q2
-            q1q2blk = [mk(2, [0, 0, 1], [False, True]),
-                       mk(1, [0, 1, 1], [True, False]),
-                       mk(1, [0, 1, 2], [True, True, True])]
-            q1q2 = evalblock(q1q2blk, 3, 2)
-            q2q2blk = [mk(2, [1, 0, 0, 1], [False, False]),
-                       mk(2, [2, 0, 0, 1], [False, True, True]),
-                       mk(2, [2, 0, 1, 2], [True, True, False]),
-                       mk(1, [0, 0, 1, 1], [False, False]),
-                       mk(1, [0, 0, 2, 1], [False, True, True]),
-                       mk(1, [1, 0, 2, 2], [True, True, False]),
-                       mk(1, [1, 0, 3, 2], [True, True, True, True])]
-            q2q2 = evalblock(q2q2blk, 4, 2)
-        else:
-            Hraw, _ = quad_vec(hess_integrand, 0, np.inf, epsabs=AbsTol, epsrel=RelTol)
-            Hraw = Hraw / np.pi
-            off = 0
-            q0q0 = Hraw[0, :]; off = 1
-            q0q1 = Hraw[off:off + dim, :]; off += dim
-            q0q2 = Hraw[off:off + dim ** 2, :].reshape(dim, dim, nx); off += dim ** 2
-            q1q1 = Hraw[off:off + dim ** 2, :].reshape(dim, dim, nx); off += dim ** 2
-            q1q2 = Hraw[off:off + dim ** 3, :].reshape(dim, dim, dim, nx); off += dim ** 3
-            q2q2 = Hraw[off:off + dim ** 4, :].reshape(dim, dim, dim, dim, nx)
-
+        q0q0 = Hraw[0, :]; off = 1
+        q0q1 = Hraw[off:off + dim, :]; off += dim
+        q0q2 = Hraw[off:off + dim ** 2, :].reshape(dim, dim, nx); off += dim ** 2
+        q1q1 = Hraw[off:off + dim ** 2, :].reshape(dim, dim, nx); off += dim ** 2
+        q1q2 = Hraw[off:off + dim ** 3, :].reshape(dim, dim, dim, nx); off += dim ** 3
+        q2q2 = Hraw[off:off + dim ** 4, :].reshape(dim, dim, dim, dim, nx)
         q0q2 = 0.5 * (q0q2 + np.swapaxes(q0q2, 0, 1))
         q1q1 = 0.5 * (q1q1 + np.swapaxes(q1q1, 0, 1))
-        raw_hess = dict(q0q0=q0q0, q0q1=q0q1, q0q2=q0q2, q1q1=q1q1, q1q2=q1q2, q2q2=q2q2)
+        return g, dict(q0q0=q0q0, q0q1=q0q1, q0q2=q0q2, q1q1=q1q1, q1q2=q1q2, q2q2=q2q2)
 
+    g, raw_hess = inversion_grad_hess(s, hess)
+    raw_grad = {key: g[key] for key in ("q0", "q1", "q2") if wanted(key)}
     return raw_grad, raw_hess, at_cusp, cusp_scale, inversion_grad_hess, nx
 
 
@@ -629,7 +530,7 @@ def _finalize_grad_hess(raw_grad, raw_hess, hess, nx):
 
 
 def cdf_grad_bd(x, mu, v, quad, wrt=None, hess=False,
-                    AbsTol=1e-10, RelTol=1e-6, precision="basic", n_ruben=1000):
+                    AbsTol=1e-10, RelTol=1e-6, precision="basic"):
     """Gradient (and optionally the Hessian) of the cdf of a quadratic form
     ``q(x) = x' q2 x + q1' x + q0`` of a normal vector ``x ~ N(mu, v)``, with
     respect to the quadratic's coefficients ``q2, q1, q0`` (holding ``mu``
@@ -661,11 +562,6 @@ def cdf_grad_bd(x, mu, v, quad, wrt=None, hess=False,
     precision : {'basic'}
         Only ``'basic'`` (double precision) is supported; ``'vpa'`` is not
         yet ported (see the module notes).
-    n_ruben : int, optional
-        Term-count cap passed through to the Ruben-series density
-        derivatives used on the ``s == 0`` route (see :func:`gx2.dens_deriv`
-        and :func:`gx2.ruben`). Only affects that route; ignored when
-        ``s != 0``. Python-only addition, not yet in the MATLAB toolbox.
 
     Returns
     -------
@@ -690,7 +586,7 @@ def cdf_grad_bd(x, mu, v, quad, wrt=None, hess=False,
     cdf_grad_gx2, norm_quad_to_gx2_params
     """
     raw_grad, raw_hess, at_cusp, cusp_scale, inversion_grad_hess, nx = _boundary_raw(
-        x, mu, v, quad, wrt, hess, AbsTol, RelTol, precision, n_ruben)
+        x, mu, v, quad, wrt, hess, AbsTol, RelTol, precision)
     if np.any(at_cusp):
         raw_grad, raw_hess = _resolve_cusp_terms(raw_grad, raw_hess, at_cusp, inversion_grad_hess, cusp_scale)
     return _finalize_grad_hess(raw_grad, raw_hess, hess, nx)
