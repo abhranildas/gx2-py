@@ -438,15 +438,20 @@ def _mp_call(q, func, args, tag=None, warn_log_path=None):
                 pass
 
         warnings.showwarning = _showwarning
+    # time the stage itself, inside the subprocess, so the reported time
+    # excludes spawning the interpreter and importing numpy/scipy/gx2
+    t0 = time.perf_counter()
     try:
-        q.put(("ok", func(*args)))
+        value = func(*args)
+        q.put(("ok", value, time.perf_counter() - t0))
     except Exception:
-        q.put(("error", traceback.format_exc()))
+        q.put(("error", traceback.format_exc(), time.perf_counter() - t0))
 
 
 def run_in_subprocess(func, args, tag=None, warn_log_path=None):
-    """Run func(*args) in a subprocess; returns (status, value) with status
-    in {'ok', 'error'}. No timeout: blocks until the subprocess finishes,
+    """Run func(*args) in a subprocess; returns (status, value, elapsed) with
+    status in {'ok', 'error'} and elapsed the time of func alone (None if the
+    subprocess died). No timeout: blocks until the subprocess finishes,
     however long that takes."""
     q = mp.Queue()
     p = mp.Process(target=_mp_call, args=(q, func, args, tag, warn_log_path))
@@ -455,7 +460,7 @@ def run_in_subprocess(func, args, tag=None, warn_log_path=None):
     try:
         return q.get(timeout=5)
     except queue.Empty:
-        return "error", "worker exited without producing a result"
+        return "error", "worker exited without producing a result", None
 
 
 def _stage_analytic(mu0, v0, mu1, v1, quad, p0, p1, tol_kwargs, hess=True):
@@ -707,8 +712,9 @@ def _run_problem(problem, outdir):
     try:
         for stage, func, args in stage_defs:
             t0 = time.perf_counter()
-            status, value = run_in_subprocess(func, args, tag=stage, warn_log_path=log_path)
-            elapsed = time.perf_counter() - t0
+            status, value, elapsed = run_in_subprocess(func, args, tag=stage, warn_log_path=log_path)
+            if elapsed is None:
+                elapsed = time.perf_counter() - t0
             _store_stage_result(result, stage, status, value, elapsed, D)
             _write_partial(result_path, result)
             log(f"{stage}: {status} in {elapsed:.2f}s")
@@ -731,7 +737,9 @@ def _run_problem(problem, outdir):
 # ---------------------------------------------------------------------------
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
-    n_workers = os.cpu_count()
+    # GX2_BENCH_WORKERS caps the pool, e.g. to the number of performance
+    # cores on a hybrid CPU, so that every timed stage runs on a like core
+    n_workers = int(os.environ.get("GX2_BENCH_WORKERS", os.cpu_count()))
     meta = dict(
         gx2_version=getattr(gx2, "__version__", "unknown"),
         numpy_version=np.__version__,
