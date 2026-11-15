@@ -177,3 +177,78 @@ def test_ray_log_finite_tail_raises():
     w, k, lam, s, m = [2, 3, 4, 1], [4, 2, 6, 1], [0, 0, 0, 0], 0, 0
     with pytest.raises(RuntimeError):
         gx2.cdf_ray(np.array([1e-70]), w, k, lam, s, m, side="lower", n_rays=100)
+
+
+# ---------------------------------------------------------------------------
+# Boundary derivatives at s=0 and small total dof D. There the Hessian's
+# inversion integrand behaves like t^(1-D/2) (gx2_derivatives.md, section
+# 1.4), so for D<=2 it does not decay, and cdf_grad_bd's value rests on the
+# extrapolated cycle sums of _osc_integral. The reference here uses no gx2
+# code: for a normal with diagonal covariance, F=P(q(x)<=0) is a closed form
+# in 1-D (from the roots of the quadratic) and a single 1-D integral in 2-D
+# (given x1, q is a quadratic in x2), evaluated in mpmath, with directional
+# derivatives by high-precision central differences.
+# ---------------------------------------------------------------------------
+def _interval_prob(A, B, C, mu, sd):
+    """P(A y^2 + B y + C <= 0) for y ~ N(mu, sd^2), A != 0, in mpmath."""
+    import mpmath as mp
+    disc = B * B - 4 * A * C
+    if disc <= 0:
+        return mp.mpf(0) if A > 0 else mp.mpf(1)
+    r = sorted([(-B - mp.sqrt(disc)) / (2 * A), (-B + mp.sqrt(disc)) / (2 * A)])
+    inside = mp.ncdf((r[1] - mu) / sd) - mp.ncdf((r[0] - mu) / sd)
+    return inside if A > 0 else 1 - inside
+
+
+def _region_prob(mu, sd, Q2, q1, q0):
+    """P(x'Q2 x + q1'x + q0 <= 0) for x ~ N(mu, diag(sd^2)), d = 1 or 2."""
+    import mpmath as mp
+    if len(mu) == 1:
+        return _interval_prob(Q2[0][0], q1[0], q0, mu[0], sd[0])
+    A = Q2[1][1]
+    B = lambda x1: 2 * Q2[0][1] * x1 + q1[1]
+    C = lambda x1: Q2[0][0] * x1 ** 2 + q1[0] * x1 + q0
+    # kinks of the integrand: where the x2-quadratic's discriminant vanishes
+    a = 4 * Q2[0][1] ** 2 - 4 * A * Q2[0][0]
+    b = 4 * Q2[0][1] * q1[1] - 4 * A * q1[0]
+    c = q1[1] ** 2 - 4 * A * q0
+    kinks = [z.real for z in mp.polyroots([a, b, c]) if abs(z.imag) < 1e-20] if a != 0 else []
+    pts = [-mp.inf] + sorted(kinks) + [mp.inf]
+    f = lambda x1: mp.npdf(x1, mu[0], sd[0]) * _interval_prob(A, B(x1), C(x1), mu[1], sd[1])
+    return mp.quad(f, pts)
+
+
+@pytest.mark.parametrize("mu, v, means, covs", [
+    ([0.0], [1.0], ([0.0], [3.0]), ([1.0], [4.0])),                 # D=1 (problem 1)
+    ([2.0], [1.05], ([0.0], [2.0]), ([1.0], [1.05])),                # D=1, near-linear (problem 3)
+    ([.3, .3], [3, .5], ([-.3, -.3], [.3, .3]), ([1, 1], [3, .5])),  # D=2, mixed sign (problem 7)
+    ([.3, .3], [.4, .6], ([-.3, -.3], [.3, .3]), ([1, 1], [.4, .6])),  # D=2, same sign (problem 5)
+])
+def test_boundary_derivs_small_dof(mu, v, means, covs):
+    import mpmath as mp
+    mp.mp.dps = 30
+    d = len(mu)
+    quad = gx2.norm_class_opt_bd(np.array(means[0]), np.diag(covs[0]),
+                                 np.array(means[1]), np.diag(covs[1]))
+    g, H = gx2.cdf_grad_bd(0, mu, np.diag(v), quad, hess=True, AbsTol=1e-12, RelTol=1e-10)
+    sd = [mp.sqrt(vi) for vi in v]
+    mmu = [mp.mpf(x) for x in mu]
+    Q2 = np.atleast_2d(quad["q2"]); q1 = np.atleast_1d(quad["q1"]); q0 = float(quad["q0"])
+    rng = np.random.default_rng(0)
+    for _ in range(2):
+        dQ2 = rng.standard_normal((d, d)); dQ2 = (dQ2 + dQ2.T) / 2
+        dq1 = rng.standard_normal(d); dq0 = rng.standard_normal()
+
+        def F(e):
+            Qe = [[mp.mpf(Q2[i, j]) + e * dQ2[i, j] for j in range(d)] for i in range(d)]
+            return _region_prob(mmu, sd, Qe, [mp.mpf(q1[i]) + e * dq1[i] for i in range(d)],
+                                mp.mpf(q0) + e * dq0)
+        h1, h2 = mp.mpf("1e-10"), mp.mpf("1e-6")
+        ref_g = float((F(h1) - F(-h1)) / (2 * h1))
+        ref_h = float((F(h2) - 2 * F(0) + F(-h2)) / h2 ** 2)
+        an_g = np.sum(g["q2"] * dQ2) + g["q1"] @ dq1 + g["q0"] * dq0
+        an_h = (np.einsum("abcd,ab,cd", H["q2q2"], dQ2, dQ2) + 2 * np.einsum("abc,a,bc", H["q1q2"], dq1, dQ2)
+                + dq1 @ H["q1q1"] @ dq1 + 2 * dq0 * (H["q0q1"] @ dq1) + 2 * dq0 * np.sum(H["q0q2"] * dQ2)
+                + H["q0q0"] * dq0 ** 2)
+        assert abs(an_g - ref_g) < 1e-8 * max(1, abs(ref_g))
+        assert abs(an_h - ref_h) < 1e-8 * max(1, abs(ref_h))

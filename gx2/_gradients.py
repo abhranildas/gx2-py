@@ -274,29 +274,35 @@ def _cusp_probe_merge(vals, cusp_scale):
     return np.where(converging, v2, np.where(d2 > 0, np.inf, -np.inf))
 
 
-def _wynn_epsilon(S):
-    """Wynn's epsilon algorithm on the partial sums ``S`` along axis 0,
-    elementwise over the remaining axes: the extrapolated limit, taken as the
-    last entry of the even column of the epsilon table that changed least
-    from the previous even column (column 0 counting with its own last
-    change). Same as ``wynn_epsilon`` in ``gx2_osc_integral.m``."""
-    prev = np.zeros((S.shape[0] + 1,) + S.shape[1:])     # column -1
-    cur = S                                              # column 0
-    best = S[-1]
-    best_change = np.abs(S[-1] - S[max(S.shape[0] - 2, 0)])
-    last_even = S[-1]
-    for col in range(1, S.shape[0]):
-        with np.errstate(divide="ignore", invalid="ignore"):
-            nxt = prev[1:cur.shape[0]] + 1.0 / np.diff(cur, axis=0)
-        if not np.isfinite(nxt).any():
-            break        # every sequence already converged exactly
-        prev, cur = cur, nxt
-        if col % 2 == 0:
-            change = np.abs(cur[-1] - last_even)
+def _mw_transform(S, x):
+    """Sidi's modified W-transformation (Math. Comp. 51, 1988, eqs. 1.9,
+    1.12-1.13 and 2.1) on the partial integrals ``S[l]`` up to the points
+    ``x[l]``, along axis 0 and elementwise over the remaining axes. The
+    cycle integrals ``psi[l] = S[l+1] - S[l]`` serve as the remainder
+    estimates, and the W-algorithm builds the approximations ``W_p^(0)``,
+    ``p = 0, 1, ...``; we return the one that changed least from its
+    predecessor. Its convergence to the (Abel) value is proven for the
+    integrands of gx2_derivatives.md, section 1.4. Same as ``mw_transform``
+    in ``gx2_osc_integral.m``."""
+    psi = np.diff(S, axis=0)
+    n = psi.shape[0]
+    xi = (1.0 / x[:n]).reshape((n,) + (1,) * (S.ndim - 1))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        M = S[:n] / psi
+        N = 1.0 / psi
+        best = S[-1]
+        best_change = np.abs(psi[-1])
+        W_prev = M[0] / N[0]
+        for p in range(n - 1):
+            d = xi[:n - p - 1] - xi[p + 1:n]
+            M = (M[:-1] - M[1:]) / d
+            N = (N[:-1] - N[1:]) / d
+            W = M[0] / N[0]
+            change = np.abs(W - W_prev)
             better = np.isfinite(change) & (change < best_change)
-            best = np.where(better, cur[-1], best)
+            best = np.where(better, W, best)
             best_change = np.where(better, change, best_change)
-            last_even = np.where(np.isfinite(cur[-1]), cur[-1], last_even)
+            W_prev = W
     return best
 
 
@@ -314,10 +320,12 @@ def _osc_integral(amp, xm, sd, AbsTol, RelTol, n_cycles=50):
     its own: within ``2 sd`` of ``m`` plainly first, and otherwise, or if
     that fails, as a head of one period (at most ``2*pi/sd`` in ``t``)
     integrated plainly, plus a tail summed cycle by cycle, with the partial
-    sums of the alternating cycle integrals extrapolated by Wynn's epsilon
-    algorithm, as QUADPACK's QAWF does (QAWF itself is scalar-only). A cycle
-    is ``2*floor(|c|)+1`` half-periods, so about ``2*pi`` long for
-    ``|c| >= 1``, and all cycles go into one vectorized quadrature.
+    sums of the alternating cycle integrals extrapolated by Sidi's modified
+    W-transformation (:func:`_mw_transform`), which converges to the Abel
+    value even where the integrand does not decay (gx2_derivatives.md,
+    section 1.4). A cycle is ``2*floor(|c|)+1`` half-periods, so about
+    ``2*pi`` long for ``|c| >= 1``, and all cycles go into one vectorized
+    quadrature.
     Everything runs in the dimensionless variable ``v = sd*t``, so results
     do not depend on the units of ``x``.
     """
@@ -350,7 +358,8 @@ def _osc_integral(amp, xm, sd, AbsTol, RelTol, n_cycles=50):
         cycles = quad_vec(
             lambda u: np.stack([f(v0 + (j + u) * L, oi)[:, 0] for j in range(n_cycles)]) * L,
             0, 1, epsabs=AbsTol / n_cycles, epsrel=RelTol)[0]
-        out[:, i] = head + _wynn_epsilon(np.cumsum(cycles, axis=0))
+        S = np.concatenate([np.zeros((1,) + cycles.shape[1:]), np.cumsum(cycles, axis=0)])
+        out[:, i] = head + _mw_transform(S, v0 + L * np.arange(n_cycles + 1))
     return out
 
 
