@@ -6,6 +6,7 @@ import warnings
 import numpy as np
 import pytest
 from scipy.stats import ncx2
+from scipy.integrate import IntegrationWarning
 
 import gx2
 
@@ -79,6 +80,49 @@ def test_ruben_matches_imhof():
     p_rub = _f(gx2.ruben(30.0, w, k, lam, m)[0])
     p_imh = _f(gx2.imhof(30.0, w, k, lam, 0, m)[0])
     assert p_rub == pytest.approx(p_imh, abs=1e-4)
+
+
+@pytest.mark.parametrize("a", [1e-3, 1e-8])
+@pytest.mark.parametrize("precision", ["basic", "vpa"])
+def test_imhof_tiny_weights_upper_tail(a, precision):
+    # regression for GitHub issue #1: Q = a*(Z1^2+Z2^2) + (Z3^2+Z4^2) is a sum
+    # of two exponentials, so P(Q>x) = (e^{-x/2} - a e^{-x/(2a)})/(1-a). Ruben
+    # can't converge (tiny min weight) and the plain Imhof quadrature used to
+    # return 8e-4 or 0 here instead of ~4.5e-5.
+    # The default tolerances apply to the Imhof integral (~pi/2), so they
+    # bound the absolute error in p (by ~5e-7; in practice ~1e-8); the tighter
+    # ones give tail-relative accuracy. Both must hold, with nothing flagged or warned.
+    w, k, lam = [a, a, 1, 1], [1, 1, 1, 1], [0, 0, 0, 0]
+    x = np.array([5.0, 20.0, 30.0])
+    exact = (np.exp(-x / 2) - a * np.exp(-x / (2 * a))) / (1 - a)
+    tight = dict(AbsTol=1e-14, RelTol=1e-12)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")   # no integration or clip warnings
+        for xi, ei in zip(x, exact):     # scalar route, as in the issue
+            p, p_err, _ = gx2.cdf(xi, w, k, lam, 0, 0, side="upper", method="auto",
+                                  precision=precision, full_output=True)
+            assert _f(p) == pytest.approx(ei, abs=5e-8, rel=1e-6)
+            assert not np.any(p_err)
+        if precision == "basic":
+            for opts, tols in (({}, dict(atol=5e-8, rtol=0)),
+                               (tight, dict(atol=0, rtol=1e-6))):
+                for xs, ex in ((x[1], exact[1]), (x, exact)):  # scalar, grid
+                    p, p_err, _ = gx2.cdf(xs, w, k, lam, 0, 0, side="upper",
+                                          method="imhof", full_output=True, **opts)
+                    assert np.allclose(p, ex, **tols)
+                    assert not np.any(p_err)
+
+
+def test_imhof_nonconvergence_is_flagged():
+    # an absurd tolerance can't be met: the result must be flagged in errflag
+    # and warned about, rather than returned as if accurate
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _, errflag = gx2.imhof(20.0, [1e-3, 1e-3, 1, 1], [1, 1, 1, 1],
+                               [0, 0, 0, 0], 0, 0, side="upper",
+                               AbsTol=1e-300, RelTol=1e-300)
+    assert np.all(errflag)
+    assert any(issubclass(c.category, IntegrationWarning) for c in caught)
 
 
 def test_ellipse_matches_imhof_finite_tail():

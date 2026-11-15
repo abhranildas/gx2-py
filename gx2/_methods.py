@@ -9,7 +9,7 @@ import warnings
 from math import comb
 import numpy as np
 from scipy.stats import ncx2, chi2
-from scipy.integrate import quad, quad_vec
+from scipy.integrate import quad, quad_vec, IntegrationWarning
 from scipy.interpolate import interp1d
 from scipy.special import gamma as _gamma
 
@@ -58,29 +58,51 @@ def imhof_integrand(u, x, w, k, l, s, m, output, idx=None, nx=0):
     together with the rule that each x-derivative multiplies ``Z`` by
     ``-(i*u/2)``, and that d/dk_j brings down the factor
     ``ell_j = -1/2*log(1 - i*w_j*u)``.
+
+    Every mode is ``Re(H(u) * exp(-i*c*u))`` with ``c = (x-m)/2`` and the
+    x-independent amplitude ``H`` from :func:`_imhof_amplitude`.
     """
-    w2u2 = w ** 2 * u ** 2
+    H = _imhof_amplitude(u, w, k, l, s, output, idx, nx)
+    return np.real(H * np.exp(-0.5j * u * (np.asarray(x) - m)))
+
+
+def _imhof_amplitude(u, w, k, l, s, output, idx=None, nx=0):
+    """Complex amplitude ``H(u)`` of the Imhof integrand, which is
+    ``Re(H(u) * exp(-i*c*u))`` with ``c = (x-m)/2``. ``H`` does not depend on
+    ``x`` or ``m`` and varies slowly in ``u``; all the oscillation of the
+    integrand is in the factor ``exp(-i*c*u)``. :func:`imhof` uses this split
+    to integrate the oscillatory tail with a Fourier-weighted quadrature.
+
+    Writing ``Z = exp(i*theta0)/rho``, with ``theta0`` the x-free part of the
+    phase, ``H = q*Z``: ``q = -i/u`` for the cdf (so ``Re(H e^{-icu})`` is
+    ``sin(theta)/(u*rho)``), ``1`` for the pdf, the x-derivative factor
+    ``(-i*u/2)**nx`` for ``'dens'``, and ``i*ell*(-i*u/2)**nx/u`` for the
+    k-derivatives (``Re(i*y) = -Im(y)``).
+
+    ``rho`` is computed in log form, which is faster and cannot overflow
+    (``w^2 u^2/(1 + w^2 u^2)`` is written ``1 - 1/q`` so it stays finite)."""
+    u = np.float64(u)   # numpy, not Python, float: overflows to inf, not an error
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        theta = np.sum(k * np.arctan(w * u) + (l * (w * u)) / (1 + w2u2)) / 2 + u * (m - x) / 2
-        rho = np.prod(((1 + w2u2) ** (k / 4)) * np.exp((w2u2 * l) / (2 * (1 + w2u2)))) * np.exp(u ** 2 * s ** 2 / 8)
+        wu = w * u
+        q = 1 + wu * wu
+        theta0 = (np.dot(k, np.arctan(wu)) + np.dot(l, wu / q)) / 2
+        log_rho = np.dot(k, np.log(q)) / 4 + np.dot(l, 1 - 1 / q) / 2 + (u * s) ** 2 / 8
+        Z = np.exp(1j * theta0 - log_rho)
         if output == "cdf":
-            return np.sin(theta) / (u * rho)
+            return -1j * Z / u
         elif output == "pdf":
-            return np.cos(theta) / rho
+            return Z
+        dfac = (-(1j * u / 2)) ** nx               # nx x-derivatives (R2)
+        if output == "dens":
+            return dfac * Z
+        elif output == "k_deriv":
+            ell = -0.5 * np.log(1 - 1j * w[idx] * u)
+        elif output == "kk_deriv":
+            ell = ((-0.5 * np.log(1 - 1j * w[idx[0]] * u))
+                   * (-0.5 * np.log(1 - 1j * w[idx[1]] * u)))
         else:
-            Z = np.exp(1j * theta) / rho              # phi(t)*exp(-i*t*x), with u=2t
-            dfac = (-(1j * u / 2)) ** nx               # nx x-derivatives (R2)
-            if output == "dens":
-                return np.real(dfac * Z)
-            elif output == "k_deriv":
-                ell = -0.5 * np.log(1 - 1j * w[idx] * u)
-                return -np.imag(ell * dfac * Z) / u
-            elif output == "kk_deriv":
-                ell = ((-0.5 * np.log(1 - 1j * w[idx[0]] * u))
-                       * (-0.5 * np.log(1 - 1j * w[idx[1]] * u)))
-                return -np.imag(ell * dfac * Z) / u
-            else:
-                raise ValueError("unknown output %r" % output)
+            raise ValueError("unknown output %r" % output)
+        return 1j * ell * dfac * Z / u
 
 
 def _imhof_integrand_mp(u, x, w, k, l, s, m, output, idx=None, nx=0):
@@ -119,31 +141,94 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
     """Imhof-Davies method for the cdf/pdf of a generalized chi-square, and
     for the exact (non-finite-differenced) parameter-derivative integrands
     used by ``cdf_grad_gx2``/``cdf_grad_bd`` -- see :func:`imhof_integrand`
-    for the ``output`` modes."""
+    for the ``output`` modes.
+
+    The result is an integral over ``u`` in ``(0, inf)`` of an integrand that
+    oscillates with period ``4*pi/|x-m|`` under an amplitude that can decay
+    as slowly as a power of ``u`` (e.g. when some weights are tiny). With
+    ``precision='basic'``, several ``x`` points are first integrated together
+    in one shared adaptive quadrature (``quad_vec``). If that does not
+    converge, or there is only one point, each point is integrated
+    separately: within ``2 sd`` of ``m`` with plain ``quad`` first, and
+    otherwise, or if that fails, split into a head over the first period
+    (capped at ``2*pi/sd`` in ``u``) integrated plainly, and a tail integrated
+    with QUADPACK's Fourier-integral routine QAWF, which handles slowly
+    decaying oscillatory tails. With ``precision='vpa'``, ``mpmath.quadosc``
+    plays the role of QAWF, used unless ``x`` is within ``0.01 sd`` of ``m``
+    (where plain ``mpmath.quad`` is used). All quadratures run in the
+    dimensionless variable ``sd*u``, so results don't depend on the units of
+    ``x``.
+
+    Parameters
+    ----------
+    AbsTol, RelTol : float, optional
+        Absolute and relative tolerances on the integral itself, not on the
+        returned probability. For the cdf the integral is of order ``pi/2``,
+        so the defaults allow an absolute error of up to about ``5e-7`` in
+        ``p`` (typically far less); for small tail probabilities, tighten
+        them (e.g. ``AbsTol=1e-14, RelTol=1e-12``) for tail-relative
+        accuracy. Probabilities below
+        about ``1e-14`` are lost to cancellation in ``0.5 -/+ integral/pi``
+        at any tolerance; use the 'tail' or 'ray' methods there.
+
+    Returns
+    -------
+    p : ndarray
+        The cdf (``side`` tail), pdf, or derivative output at ``x``.
+    errflag : ndarray of bool
+        True where ``p`` is unreliable: either the quadrature did not reach
+        the requested accuracy (also warned with ``IntegrationWarning``), or
+        a probability fell outside [0, 1] and was clipped (warned with
+        :class:`ImhofClipWarning`). Not set by ``precision='vpa'``'s
+        quadrature, which reports no convergence status.
+    """
     w = asrow(w); k = asrow(k); l = asrow(l)
     x = np.asarray(x, dtype=float)
     xf = x.ravel()
 
     integral = np.empty(xf.size)
+    failed = np.zeros(xf.size, dtype=bool)
+    # Integrate in the dimensionless variable v = sd*u, in which the
+    # integrand's mass lies at v ~ 1 and it oscillates at rate (x-m)/(2*sd).
+    # The quadrature routines below have built-in unit scales (QUADPACK's map
+    # of (0, inf), QAWF's cycle length, mpmath's tanh-sinh nodes), so without
+    # this their accuracy -- and QAWF's error estimate -- would depend on the
+    # units of x.
+    sd = np.sqrt(stat(w, k, l, s, m)[1]) or 1.0
+    cs = (xf - m) / (2 * sd)
     if precision == "basic":
-        if xf.size <= 2:
-            # quad_vec's Python-level adaptive quadrature carries more
-            # per-call overhead than quad's compiled QUADPACK routines; that
-            # overhead dominates when there are only one or two x points to
-            # share a quadrature over, so loop plain quad instead.
-            for i, xi in enumerate(xf):
-                integral[i] = quad(lambda u: imhof_integrand(u, xi, w, k, l, s, m, output, idx, nx),
-                                   0, np.inf, epsabs=AbsTol, epsrel=RelTol)[0]
-        else:
-            # integrate over all x points in one adaptive quadrature: for each
-            # node u, the x-independent parts of the integrand (theta's sum over
-            # terms, and rho) are computed once and shared across all x.
-            integral = quad_vec(lambda u: imhof_integrand(u, xf, w, k, l, s, m, output, idx, nx),
-                                0, np.inf, epsabs=AbsTol, epsrel=RelTol)[0]
+        H = lambda v: _imhof_amplitude(v / sd, w, k, l, s, output, idx, nx) / sd
+        converged = False
+        if xf.size > 1:
+            # Fast path for many x: one adaptive quadrature over (0, inf)
+            # shared by all x, so H is computed once per node. It handles
+            # most cases, and when it doesn't, it reports so (checked against
+            # the per-point route below, it was accurate whenever it
+            # converged). Its budget is capped so a failed attempt is cheap.
+            r = quad_vec(lambda v: np.real(H(v) * np.exp(-1j * cs * v)),
+                         0, np.inf, epsabs=AbsTol, epsrel=RelTol, limit=200,
+                         full_output=True)
+            integral, converged = r[0], r[2].status == 0
+        if not converged:
+            for i, ci in enumerate(cs):
+                integral[i], failed[i] = _imhof_quad(H, ci, AbsTol, RelTol)
+        if np.any(failed):
+            warnings.warn("Imhof integral did not reach the requested accuracy "
+                          "at %d of %d point(s); these are flagged in errflag."
+                          % (failed.sum(), failed.size), IntegrationWarning)
     elif precision == "vpa":
-        for i, xi in enumerate(xf):
-            val = mp.quad(lambda u: _imhof_integrand_mp(u, xi, w, k, l, s, m, output, idx, nx),
-                          [0, mp.inf])
+        # Where the integrand oscillates over its mass (|c| not small), plain
+        # mp.quad can be far off yet report a small error, so quadosc (which
+        # sums the integral period by period and extrapolates the sum) is
+        # used. For |c| below ~0.005 (x within ~0.01 sd of m) the periods are
+        # too long for quadosc, and plain mp.quad is the more accurate
+        # (crossover found empirically).
+        for i, (xi, ci) in enumerate(zip(xf, cs)):
+            f = lambda v: _imhof_integrand_mp(v / sd, xi, w, k, l, s, m, output, idx, nx) / sd
+            if abs(ci) >= 0.005:
+                val = mp.quadosc(f, [0, mp.inf], omega=abs(ci))
+            else:
+                val = mp.quad(f, [0, mp.inf])
             integral[i] = float(val)
     else:
         raise ValueError("precision must be 'basic' or 'vpa'")
@@ -173,7 +258,44 @@ def imhof(x, w, k, l, s, m, side="lower", output="cdf",
                       "exactly, so clipping. Check the errflag output, and try "
                       "stricter tolerances.", ImhofClipWarning)
         p = np.maximum(p, 0)
-    return p, errflag
+    return p, errflag | failed.reshape(x.shape)
+
+
+def _imhof_quad(H, c, AbsTol, RelTol):
+    """Integral over v in (0, inf) of ``Re(H(v) * exp(-i*c*v))``, in the
+    dimensionless variable of :func:`imhof` (integrand mass at ``v ~ 1``),
+    and whether QUADPACK failed to reach the requested accuracy.
+
+    With ``c != 0`` the integrand oscillates with period ``2*pi/|c|`` while
+    its amplitude ``H`` may decay as slowly as a power of ``v`` (e.g. when
+    some weights are tiny, the integrand only stops oscillating at ``v`` of
+    order ``sd/min|w|``). A generic quadrature over ``(0, inf)`` can then
+    fail. In that case we integrate a head ``(0, v0)`` plainly and the rest
+    with QUADPACK's Fourier-integral routine QAWF, which integrates cycle by
+    cycle and extrapolates their sum. The tail splits as
+    ``Re(H)*cos(|c|v) + sign(c)*Im(H)*sin(|c|v)``. QAWF takes only an
+    absolute tolerance, so we give it ``RelTol`` relative to the head.
+
+    The head is one period, but no longer than ``2*pi``, so that it covers
+    the integrand's mass even when ``x`` is near ``m`` (tiny ``c``). When
+    ``|c| <= 1`` (``x`` within ``2 sd`` of ``m``) the oscillation is slow over
+    that mass, the plain quadrature over ``(0, inf)`` usually works and is
+    more accurate, so we try it first and split only if it fails. Farther
+    out, we split straight away."""
+    full = lambda v: np.real(H(v) * np.exp(-1j * c * v))
+    if abs(c) <= 1:
+        r = quad(full, 0, np.inf, epsabs=AbsTol, epsrel=RelTol, full_output=1)
+        if len(r) == 3 or c == 0:
+            return r[0], len(r) > 3
+    v0 = 2 * np.pi / max(abs(c), 1)
+    head = quad(full, 0, v0, epsabs=AbsTol, epsrel=RelTol, full_output=1)
+    tol = max(AbsTol, RelTol * abs(head[0]))
+    tail_c = quad(lambda v: np.real(H(v)), v0, np.inf, weight="cos", wvar=abs(c),
+                  epsabs=tol, full_output=1)
+    tail_s = quad(lambda v: np.imag(H(v)), v0, np.inf, weight="sin", wvar=abs(c),
+                  epsabs=tol, full_output=1)
+    val = head[0] + tail_c[0] + np.sign(c) * tail_s[0]
+    return val, any(len(r) > 3 for r in (head, tail_c, tail_s))
 
 
 # ===========================================================================

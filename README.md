@@ -84,7 +84,7 @@ also force one:
 
 | method | notes |
 |--------|-------|
-| `'imhof'`   | Imhof–Davies numerical integration (`precision='basic'` or `'vpa'`) |
+| `'imhof'`   | Imhof–Davies numerical integration (`precision='basic'` or `'vpa'`); the oscillatory tail of the integral is handled with a Fourier-integral quadrature. `AbsTol`/`RelTol` apply to the integral (~π/2 for the cdf), so tighten them for small tail probabilities. With `full_output=True`, `p_err` flags points that did not converge or were clipped |
 | `'ray'`     | ray-trace method (`precision='basic'`, `'log'` or `'vpa'`; tune with `n_rays`, `force_mc`) |
 | `'ifft'`    | inverse-FFT method; `x='full'` returns the cdf/pdf over a spanning grid |
 | `'ruben'`   | Ruben's series — requires all `w` the same sign and `s=0` |

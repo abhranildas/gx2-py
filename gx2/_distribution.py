@@ -89,7 +89,10 @@ def cdf(x, w, k, l, s, m, side="lower", method="auto",
         Returned only when ``full_output=True``. An estimate of the numerical
         error in ``p`` (its exact meaning depends on the method, e.g. the
         Monte-Carlo standard error for ``'ray'`` or an error bound for
-        ``'ruben'``), or ``None`` for methods that do not provide one.
+        ``'ruben'``), or ``None`` for methods that do not provide one. For
+        ``'imhof'`` (including when ``'auto'`` uses it) it is a boolean flag,
+        True where ``p`` is unreliable because the integration did not
+        converge or the result was clipped to [0, 1]; see :func:`gx2.imhof`.
     x_grid : ndarray or None
         Returned only when ``full_output=True``. When ``x='full'``, the array of
         points at which ``p`` was evaluated; otherwise ``None``.
@@ -219,7 +222,11 @@ def pdf(x, w, k, l, s, m, side="lower", method="auto", diff=False,
         logarithm for entries too small for double precision.
     f_err : ndarray or None
         Returned only when ``full_output=True``. A method-dependent estimate of
-        the numerical error in ``f``, or ``None`` if unavailable.
+        the numerical error in ``f``, or ``None`` if unavailable. For
+        ``'imhof'`` (including when ``'auto'`` uses it) it is a boolean flag,
+        True where ``f`` is unreliable because the integration did not
+        converge or the result was negative and clipped; see
+        :func:`gx2.imhof`.
     x_grid : ndarray or None
         Returned only when ``full_output=True``. The grid of points used when
         ``x='full'``; otherwise ``None``.
@@ -243,11 +250,11 @@ def pdf(x, w, k, l, s, m, side="lower", method="auto", diff=False,
             elif np.sum(np.abs(w)) == 0 and s:
                 f = norm.pdf(x, m, s)
             else:
-                f, _ = imhof(x, w, k, l, s, m, output="pdf",
-                             **_filter(imhof, kwargs))
+                f, f_err = imhof(x, w, k, l, s, m, output="pdf",
+                                 **_filter(imhof, kwargs))
         elif method == "imhof":
-            f, _ = imhof(x, w, k, l, s, m, output="pdf",
-                         **_filter(imhof, kwargs))
+            f, f_err = imhof(x, w, k, l, s, m, output="pdf",
+                             **_filter(imhof, kwargs))
         elif method == "ruben":
             _check_method("ruben", w, s)
             f, _ = ruben(x, w, k, l, m, output="pdf",
