@@ -166,6 +166,34 @@ def test_ray_grid_matches_imhof():
     assert np.allclose(p_ray, p_imh, atol=2e-3)
 
 
+@pytest.mark.parametrize("method", ["auto", "imhof", "ray", "tail"])
+@pytest.mark.parametrize("w, k, m", [
+    ([0.0, 0.0], [1, 1], 0.0),   # all weights zero (gx2-py#1)
+    ([2.0, 3.0], [0, 0], 1.5),   # no degrees of freedom
+])
+def test_point_mass(method, w, k, m):
+    # zero variance: X = m surely, so P(X <= x) steps from 0 to 1 at m
+    x = m + np.array([-1.0, 0.0, 1.0])
+    args = (w, k, [0, 0], 0, m)
+    assert np.array_equal(gx2.cdf(x, *args, method=method), [0, 1, 1])
+    assert np.array_equal(gx2.cdf(x, *args, side="upper", method=method), [1, 0, 0])
+    assert np.array_equal(gx2.pdf(x, *args, method=method), [0, np.inf, 0])
+
+
+@pytest.mark.parametrize("w, x, exact", [
+    # chi-square with 3 dof
+    ([1.0, 1.0, 1.0], 12.0, ncx2.sf(12.0, 3, 1e-300)),
+    # 0.001*chi2_2 + chi2_2 = 0.002*E1 + 2*E2, a hypoexponential (gx2-py#1)
+    ([0.001, 0.001, 1.0, 1.0], 40.0, 2 / 1.998 * np.exp(-20)),
+])
+def test_ray_grid_dims_3_4(w, x, exact):
+    # regression: dims 3 and 4 integrate over angles with dblquad/tplquad,
+    # whose integrand used float() on a (1,1) array, an error in NumPy 2
+    k = [1] * len(w)
+    p = _f(gx2.cdf(x, w, k, [0] * len(w), 0, 0, side="upper", method="ray"))
+    assert p == pytest.approx(exact, rel=1e-2)
+
+
 def test_ray_log_precision_subrealmin():
     w, k, lam, s, m = [-2, -3, 4, 1], [4, 2, 6, 1], [10, 20, 5, 0], 20, 0
     v = _f(gx2.cdf(12000.0, w, k, lam, s, m, side="upper", method="ray",

@@ -364,18 +364,18 @@ def int_norm_ray(mu, v, dom, side="upper", output="prob", force_mc=False,
             p = np.empty(fun_level.size)
             for i, f in enumerate(fun_level):
                 val, _ = dblquad(
-                    lambda ph, th: float(norm_prob_across_angles(
+                    lambda ph, th: norm_prob_across_angles(
                         mu, v, dom, side=side, output=output, precision="basic",
-                        fun_level=np.array([f]), theta=th, phi=ph)),
+                        fun_level=np.array([f]), theta=th, phi=ph).item(),
                     0, np.pi / 2, 0, 2 * np.pi, epsabs=AbsTol, epsrel=RelTol)
                 p[i] = val
         elif dim == 4:
             p = np.empty(fun_level.size)
             for i, f in enumerate(fun_level):
                 val, _ = tplquad(
-                    lambda ps, ph, th: float(norm_prob_across_angles(
+                    lambda ps, ph, th: norm_prob_across_angles(
                         mu, v, dom, side=side, output=output, precision="basic",
-                        fun_level=np.array([f]), theta=th, phi=ph, psi=ps)),
+                        fun_level=np.array([f]), theta=th, phi=ph, psi=ps).item(),
                     0, np.pi / 2, 0, 2 * np.pi, 0, np.pi, epsabs=AbsTol, epsrel=RelTol)
                 p[i] = val
         p_err = None

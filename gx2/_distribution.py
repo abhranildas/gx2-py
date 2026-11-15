@@ -24,6 +24,14 @@ def _is_full(x):
     return isinstance(x, str) and x.lower() == "full"
 
 
+def _point_mass(w, k, l, s, m):
+    """The location of X if it has zero variance, i.e. is a point mass (e.g.
+    all weights zero and no normal term), else None. The methods all assume a
+    spread-out distribution, so cdf and pdf handle this case first."""
+    mu, v = stat(w, k, l, s, m)
+    return mu if v == 0 else None
+
+
 def _check_method(method, w, s):
     """Validate the same-sign-w, s==0 constraint shared by 'ruben'/'ellipse'."""
     if s or not (np.all(w > 0) or np.all(w < 0)):
@@ -114,8 +122,11 @@ def cdf(x, w, k, l, s, m, side="lower", method="auto",
 
     if full:
         method = "ifft"
+    point = _point_mass(w, k, l, s, m)
 
-    if method == "auto":
+    if point is not None and not full:
+        p = (x >= point if side == "lower" else x < point).astype(float)
+    elif method == "auto":
         uw = np.unique(w)
         if (not s) and uw.size == 1:
             uw0 = uw[0]
@@ -240,8 +251,11 @@ def pdf(x, w, k, l, s, m, side="lower", method="auto", diff=False,
 
     if full:
         method = "ifft"
+    point = _point_mass(w, k, l, s, m)
 
-    if not diff:
+    if point is not None and not full:
+        f = np.where(x == point, np.inf, 0.0)
+    elif not diff:
         if method == "auto":
             uw = np.unique(w)
             if (not s) and uw.size == 1 and not full:
